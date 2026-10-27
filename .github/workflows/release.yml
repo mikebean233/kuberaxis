@@ -46,9 +46,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
 
-      # package-lock.json is not committed, so install from package.json.
-      - run: npm install
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test
       # Builds the API and web images from the Dockerfile and tests them against PostgreSQL.
