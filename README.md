@@ -32,7 +32,20 @@ npm install
 npm run db:up   # Postgres 18 via docker compose (port 5432; override with POSTGRES_PORT)
 npm run dev     # API on :3001 (applies migrations on start) + web on http://localhost:5173
 npm test        # parser + API tests (import tests need the DB)
+npm run test:docker   # builds the Docker images and tests them against PostgreSQL
 ```
+
+### Docker
+
+One `Dockerfile` builds both images the Helm chart deploys:
+
+```sh
+docker build --target api -t kuberaxis-api .   # Node API on :3001, applies migrations on start
+docker build --target web -t kuberaxis-web .   # built SPA served by nginx on :8080
+```
+
+The API image reads `DATABASE_URL` (and `PGPASSWORD`), like the chart sets. `npm run test:docker` builds both and
+checks them end to end; set `IMAGE_API` / `IMAGE_WEB` to test prebuilt images instead.
 
 | Path | What |
 | --- | --- |
@@ -40,6 +53,7 @@ npm test        # parser + API tests (import tests need the DB)
 | `test-data` | `usbank-sample-statement.pdf`, a fictional statement (regenerate with `npm run sample:usbank -w @kuberaxis/parser`). Put real statements in `test-data/manual/` (gitignored) and the parser tests will check them too. |
 | `apps/api` | Fastify + Postgres API: `POST /api/imports` (multipart PDF), `GET /api/transactions` |
 | `apps/web` | React + Vite + TanStack Table UI |
+| `tests/docker` | End-to-end tests of the Docker images (`npm run test:docker`) |
 
 ### Releases
 

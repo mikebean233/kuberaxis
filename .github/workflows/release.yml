@@ -51,6 +51,8 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm test
+      # Builds the API and web images from the Dockerfile and tests them against PostgreSQL.
+      - run: npm run test:docker
 
       - name: Compute next version
         id: version
