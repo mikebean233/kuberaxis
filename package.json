@@ -1,0 +1,21 @@
+{
+  "name": "kuberaxis",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "tests/*"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w @kuberaxis/api\" \"npm run dev -w @kuberaxis/web\"",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:docker": "npm run test:docker -w @kuberaxis/docker-tests"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}

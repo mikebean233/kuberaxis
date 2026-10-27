@@ -1,0 +1,96 @@
+# Cuts a GitHub Release for every push to main. The next semantic version comes from the commits since the
+# last vX.Y.Z tag (Conventional Commits):
+#
+#   "feat!: ..." / "fix(api)!: ..." or a "BREAKING CHANGE" footer  -> major
+#   "feat: ..." / "feat(web): ..."                                  -> minor
+#   anything else                                                   -> patch
+#
+# The first release is v0.1.0. The Helm chart is packaged with version and appVersion set to the new version
+# and attached to the release.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Releases run one at a time, so two quick pushes can't compute the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: kuberaxis
+          POSTGRES_PASSWORD: kuberaxis
+          POSTGRES_DB: kuberaxis
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kuberaxis"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history and tags, to find the last release and the commits since.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # package-lock.json is not committed, so install from package.json.
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      # Builds the API and web images from the Dockerfile and tests them against PostgreSQL.
+      - run: npm run test:docker
+
+      - name: Compute next version
+        id: version
+        run: |
+          last=$(git tag --list 'v*' --merged HEAD --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [[ -z "$last" ]]; then
+            version=0.1.0
+          else
+            IFS=. read -r major minor patch <<< "${last#v}"
+            log=$(git log --format='%s%n%b' "$last..HEAD")
+            if grep -qE '^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:' <<< "$log"; then
+              version="$((major + 1)).0.0"
+            elif grep -qE '^feat(\([^)]*\))?:' <<< "$log"; then
+              version="$major.$((minor + 1)).0"
+            else
+              version="$major.$minor.$((patch + 1))"
+            fi
+          fi
+          echo "Last release: ${last:-none}, next: v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
+        run: |
+          helm lint charts/kuberaxis
+          helm package charts/kuberaxis \
+            --version "${{ steps.version.outputs.version }}" \
+            --app-version "${{ steps.version.outputs.version }}" \
+            --destination dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          # Creates the tag on the pushed commit along with the release.
+          gh release create "$TAG" dist/kuberaxis-*.tgz \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes

@@ -1,0 +1,25 @@
+{
+  "name": "@kuberaxis/parser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Financial data tooling: statement parsers",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "parse:usbank": "tsx scripts/parse-usbank.ts",
+    "sample:usbank": "tsx scripts/make-sample-statement.ts"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.4.299"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}

@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/test
+tests
+.git
+.github
+.idea
+charts
+# Includes test-data/manual, which may hold real statements; nothing in the images needs it.
+test-data
+.env
+**/*.local.yaml
+**/*.local.yml
+**/.DS_Store
