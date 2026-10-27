@@ -1,0 +1,110 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+api:
+  image:
+    repository: ghcr.io/mikebean233/kuberaxis-api
+    # Defaults to the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Migrations run on start under a Postgres advisory lock, so multiple replicas are safe.
+  replicaCount: 1
+  port: 3001
+  # "production" disables DELETE /api/data, which wipes all imported data.
+  nodeEnv: production
+  # Extra environment variables, as a list of EnvVar objects.
+  extraEnv: []
+  resources: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  service:
+    type: ClusterIP
+    port: 3001
+
+web:
+  image:
+    repository: ghcr.io/mikebean233/kuberaxis-web
+    # Defaults to the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # Port the static file server in the web image listens on.
+  port: 8080
+  resources: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  service:
+    type: ClusterIP
+    port: 80
+
+# The web UI calls the API at /api on the same host, so each host routes /api to the API
+# and everything else to the web UI.
+ingress:
+  enabled: false
+  className: ""
+  # The API accepts statement uploads up to 25 MiB. ingress-nginx defaults to 1m, so raise it:
+  #   nginx.ingress.kubernetes.io/proxy-body-size: 25m
+  annotations: {}
+  hosts:
+    - host: kuberaxis.local
+  tls: []
+  #  - secretName: kuberaxis-tls
+  #    hosts:
+  #      - kuberaxis.local
+
+# Bundled PostgreSQL. Set enabled: false and fill in externalDatabase to use your own.
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "18"
+    pullPolicy: IfNotPresent
+  auth:
+    username: kuberaxis
+    database: kuberaxis
+    # Leave empty to generate a random password, kept across upgrades.
+    password: ""
+    # Use an existing Secret for the password instead. Takes precedence over password.
+    existingSecret: ""
+    existingSecretPasswordKey: password
+  persistence:
+    enabled: true
+    # Empty uses the cluster's default StorageClass.
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 8Gi
+  resources: {}
+  podSecurityContext:
+    # Matches the postgres user in the official image so it can write to the volume.
+    fsGroup: 999
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  service:
+    port: 5432
+
+# Used when postgresql.enabled is false.
+externalDatabase:
+  host: ""
+  port: 5432
+  username: kuberaxis
+  database: kuberaxis
+  password: ""
+  # Use an existing Secret for the password instead. Takes precedence over password.
+  existingSecret: ""
+  existingSecretPasswordKey: password
+  # Appended to the connection URL as ?sslmode=..., e.g. "verify-full". Empty leaves it unset.
+  # node-postgres 8 treats "require" as "verify-full", so the server certificate must be trusted.
+  sslMode: ""

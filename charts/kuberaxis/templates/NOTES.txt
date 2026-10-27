@@ -1,0 +1,29 @@
+Kuberaxis {{ .Chart.AppVersion }} is deployed as release "{{ .Release.Name }}".
+
+{{- if .Values.ingress.enabled }}
+
+Open the app at:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/
+{{- end }}
+{{- else }}
+
+No ingress is enabled. The web UI expects the API at /api on the same host, so port-forwarding
+the web service alone won't give you a working app. Enable the ingress (ingress.enabled=true),
+or check the API directly:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kuberaxis.api.fullname" . }} {{ .Values.api.service.port }}
+  curl http://localhost:{{ .Values.api.service.port }}/api/health
+{{- end }}
+
+{{- if .Values.postgresql.enabled }}
+
+Database: bundled PostgreSQL ({{ include "kuberaxis.postgresql.fullname" . }}).
+{{- if not .Values.postgresql.persistence.enabled }}
+WARNING: postgresql.persistence.enabled is false. Data is lost when the pod restarts.
+{{- end }}
+The password Secret ({{ include "kuberaxis.db.secretName" . }}) and data volume are kept on uninstall.
+{{- else }}
+
+Database: external PostgreSQL at {{ .Values.externalDatabase.host }}:{{ .Values.externalDatabase.port }}.
+{{- end }}

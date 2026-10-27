@@ -1,0 +1,9 @@
+apiVersion: v2
+name: kuberaxis
+description: Kuberaxis personal finance app (API, web UI, and optional bundled PostgreSQL)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/mikebean233/kuberaxis
+sources:
+  - https://github.com/mikebean233/kuberaxis
