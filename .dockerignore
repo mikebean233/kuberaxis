@@ -2,6 +2,8 @@
 **/dist
 **/test
 tests
+# npm ci needs every workspace manifest listed in the lockfile.
+!tests/docker/package.json
 .git
 .github
 .idea

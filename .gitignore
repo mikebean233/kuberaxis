@@ -5,5 +5,4 @@ dist/
 !test-data/*.pdf
 .env
 .DS_Store
-package-lock.json
 test-data/manual/**

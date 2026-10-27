@@ -9,11 +9,12 @@ ARG NODE_VERSION=22
 # All dependencies, for building. Manifests are copied first so the install layer is cached until they change.
 FROM node:${NODE_VERSION}-bookworm-slim AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 COPY packages/parser/package.json packages/parser/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
-RUN npm install --no-audit --no-fund
+COPY tests/docker/package.json tests/docker/
+RUN npm ci --no-audit --no-fund
 
 FROM deps AS build
 COPY packages packages
@@ -23,10 +24,12 @@ RUN npm run build -w @kuberaxis/api && npm run build -w @kuberaxis/web
 # The API's runtime dependencies only. The parser is bundled into the API, so its workspace link is dropped.
 FROM node:${NODE_VERSION}-bookworm-slim AS api-deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 COPY packages/parser/package.json packages/parser/
 COPY apps/api/package.json apps/api/
-RUN npm install --omit=dev --workspace @kuberaxis/api --no-audit --no-fund && rm -rf node_modules/@kuberaxis
+COPY apps/web/package.json apps/web/
+COPY tests/docker/package.json tests/docker/
+RUN npm ci --omit=dev --workspace @kuberaxis/api --no-audit --no-fund && rm -rf node_modules/@kuberaxis
 
 FROM node:${NODE_VERSION}-bookworm-slim AS api
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3001
