@@ -41,6 +41,20 @@ npm test        # parser + API tests (import tests need the DB)
 | `apps/api` | Fastify + Postgres API: `POST /api/imports` (multipart PDF), `GET /api/transactions` |
 | `apps/web` | React + Vite + TanStack Table UI |
 
+### Releases
+
+Every push to `main` runs `.github/workflows/release.yml`: it tests the code, picks the next semantic version from
+the commit messages since the last `vX.Y.Z` tag, packages the Helm chart with `version` and `appVersion` set to it,
+and creates a tagged GitHub Release with the chart attached.
+
+| Commits since the last release include | Bump |
+| --- | --- |
+| `feat!: ...`, `fix(api)!: ...`, or a `BREAKING CHANGE:` footer | major |
+| `feat: ...` / `feat(scope): ...` | minor |
+| anything else | patch |
+
+The first release is `v0.1.0`.
+
 ### Import de-duplication
 
 Each transaction is fingerprinted (date, amount, type, description, details, ref number, card) and numbered by
