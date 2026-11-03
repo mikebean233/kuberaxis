@@ -1,0 +1,102 @@
+# Runs in Gitea Actions on a mirror of this repo, not on GitHub. When a release tag (vX.Y.Z, created by
+# release.yml) reaches the mirror, publishes that version and deploys it:
+#
+#   1. builds the Dockerfile's api and web targets and pushes them as
+#      <IMAGE_REPOSITORY>/kuberaxis-api:X.Y.Z and <IMAGE_REPOSITORY>/kuberaxis-web:X.Y.Z
+#   2. in one commit to the deployment repo, copies in the release's chart (charts/kuberaxis, version and
+#      appVersion X.Y.Z) and sets both images to X.Y.Z (kustomize)
+#
+# Everything about where it publishes and deploys comes from Actions variables and secrets, set outside this repo:
+#   variables  IMAGE_REPOSITORY, REGISTRY_USERNAME, DEPLOYMENT_REPO (<host>/<owner>/<repo>), COMMIT_EMAIL
+#   secrets    REGISTRY_PASSWORD, DEPLOY_REPO_TOKEN (can push to the deployment repo)
+#
+# Tags made before this file existed don't trigger it; run it by hand with the tag instead.
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, e.g. v0.1.0
+        required: true
+
+env:
+  REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+  DEPLOYMENT_REPO: ${{ vars.DEPLOYMENT_REPO }}
+  COMMIT_EMAIL: ${{ vars.COMMIT_EMAIL }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          TAG: ${{ inputs.tag || gitea.ref_name }}
+          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not a release tag: $TAG" >&2; exit 1; }
+          for variable in REPOSITORY:IMAGE_REPOSITORY REGISTRY_USERNAME:REGISTRY_USERNAME \
+              DEPLOYMENT_REPO:DEPLOYMENT_REPO COMMIT_EMAIL:COMMIT_EMAIL; do
+            name=${variable%%:*}
+            [[ -n "${!name}" ]] || { echo "Actions variable ${variable#*:} is not set" >&2; exit 1; }
+          done
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "registry=${REPOSITORY%%/*}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+
+      - name: Log in to the registry
+        run: echo "$PASSWORD" | docker login -u "$USERNAME" --password-stdin "https://$REGISTRY"
+        env:
+          USERNAME: ${{ vars.REGISTRY_USERNAME }}
+          PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY: ${{ steps.version.outputs.registry }}
+
+      - name: Build and push images
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for target in api web; do
+            docker build --target "$target" -t "$REPOSITORY/kuberaxis-$target:$VERSION" .
+            docker push "$REPOSITORY/kuberaxis-$target:$VERSION"
+          done
+
+      # Renders the deployment repo below before pushing (kustomize build --enable-helm)
+      - uses: azure/setup-helm@v4
+
+      - name: Install yq and kustomize
+        run: |
+          wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
+          wget -qO- https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin kustomize
+
+      - name: Deploy (update the deployment repo)
+        env:
+          TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git clone --depth 1 "https://x-access-token:$TOKEN@$DEPLOYMENT_REPO.git" /tmp/deployment
+          cd /tmp/deployment
+          # The release's chart, vendored: kustomize renders it from charts/ (it can't pull from a registry)
+          rm -rf charts/kuberaxis
+          cp -R "$GITHUB_WORKSPACE/charts/kuberaxis" charts/
+          yq -i '.version = strenv(VERSION) | .appVersion = strenv(VERSION)' charts/kuberaxis/Chart.yaml
+          for target in api web; do
+            kustomize edit set image "kuberaxis-$target=$REPOSITORY/kuberaxis-$target:$VERSION"
+          done
+          kustomize build --enable-helm . > /dev/null
+          rm -rf charts/kuberaxis/charts
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "Deployment repo already on $VERSION"
+            exit 0
+          fi
+          git add -A
+          git -c user.name="CI" -c user.email="$COMMIT_EMAIL" commit -m "kuberaxis $VERSION"
+          git push
