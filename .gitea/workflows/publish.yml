@@ -67,8 +67,11 @@ jobs:
             docker push "$REPOSITORY/kuberaxis-$target:$VERSION"
           done
 
-      # Renders the deployment repo below before pushing (kustomize build --enable-helm)
+      # Renders the deployment repo below before pushing (kustomize build --enable-helm). Helm 3:
+      # kustomize runs `helm version -c`, which Helm 4 dropped
       - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.1
 
       - name: Install yq and kustomize
         run: |
