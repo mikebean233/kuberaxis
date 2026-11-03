@@ -35,6 +35,7 @@ npm test        # parser + API tests (import tests need the DB)
 npm run test:docker   # builds the Docker images and tests them against PostgreSQL
 ```
 
+
 ### Docker
 
 One `Dockerfile` builds both images the Helm chart deploys:
