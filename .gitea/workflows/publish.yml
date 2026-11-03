@@ -9,6 +9,7 @@
 # Everything about where it publishes and deploys comes from Actions variables and secrets, set outside this repo:
 #   variables  IMAGE_REPOSITORY, REGISTRY_USERNAME, DEPLOYMENT_REPO (<host>/<owner>/<repo>), COMMIT_EMAIL
 #   secrets    REGISTRY_PASSWORD, DEPLOY_REPO_TOKEN (can push to the deployment repo)
+# It runs on the runner label ci-tools: a job image with Docker, Helm 3, kustomize and yq.
 #
 # Tags made before this file existed don't trigger it; run it by hand with the tag instead.
 name: Publish
@@ -29,7 +30,7 @@ env:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ci-tools
     steps:
       - name: Resolve version
         id: version
@@ -66,19 +67,6 @@ jobs:
             docker build --target "$target" -t "$REPOSITORY/kuberaxis-$target:$VERSION" .
             docker push "$REPOSITORY/kuberaxis-$target:$VERSION"
           done
-
-      # Renders the deployment repo below before pushing (kustomize build --enable-helm). Helm 3:
-      # kustomize runs `helm version -c`, which Helm 4 dropped
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.22.1
-
-      - name: Install yq and kustomize
-        run: |
-          wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
-          chmod +x /usr/local/bin/yq
-          wget -qO- https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz \
-            | tar -xz -C /usr/local/bin kustomize
 
       - name: Deploy (update the deployment repo)
         env:
