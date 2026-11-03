@@ -5,6 +5,8 @@
 #   "feat: ..." / "feat(web): ..."                                  -> minor
 #   anything else                                                   -> patch
 #
+# The last tag is the highest vX.Y.Z in the repo, whether or not its commit is in main's history (e.g. after a
+# squash merge or a rewritten history); the commits since are the ones on main that it doesn't contain.
 # The first release is v0.1.0. The Helm chart is packaged with version and appVersion set to the new version
 # and attached to the release.
 name: Release
@@ -57,7 +59,7 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          last=$(git tag --list 'v*' --merged HEAD --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          last=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
           if [[ -z "$last" ]]; then
             version=0.1.0
           else
