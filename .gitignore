@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.idea/
+*.pdf
+!test-data/*.pdf
+.env
+.DS_Store
+test-data/manual/**

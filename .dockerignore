@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/test
+tests
+# npm ci needs every workspace manifest listed in the lockfile.
+!tests/docker/package.json
+.git
+.github
+.idea
+charts
+# Includes test-data/manual, which may hold real statements; nothing in the images needs it.
+test-data
+.env
+**/*.local.yaml
+**/*.local.yml
+**/.DS_Store

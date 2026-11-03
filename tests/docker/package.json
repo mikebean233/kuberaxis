@@ -1,0 +1,16 @@
+{
+  "name": "@kuberaxis/docker-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Builds the Docker images and tests them against a real PostgreSQL container",
+  "scripts": {
+    "test:docker": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}

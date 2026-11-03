@@ -1,0 +1,6 @@
+# Packaged charts and downloaded dependencies
+*.tgz
+
+# Local values overrides (may contain secrets)
+*.local.yaml
+*.local.yml
