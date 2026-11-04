@@ -19,8 +19,9 @@ import {
   useTable,
   type FilterFn,
 } from "@tanstack/react-table";
-import type { TransactionRow } from "./api";
-import { formatAmount, formatDate } from "./format";
+import { createContext, useContext } from "react";
+import type { Category, TransactionRow } from "./api";
+import { formatAmount, formatCents, formatDate } from "./format";
 
 export interface AmountFilter {
   direction: "all" | "in" | "out";
@@ -40,6 +41,37 @@ const amountFilter: FilterFn<typeof features, TransactionRow> = (row, columnId, 
 };
 amountFilter.autoRemove = (value?: AmountFilter) => !value || (value.direction === "all" && !value.min && !value.max);
 
+/** Category names a transaction's spending goes to: its items' categories, or its own. */
+const categoryNames = (t: TransactionRow) => (t.itemCount > 0 ? t.categories : t.categoryName ? [t.categoryName] : []);
+
+/**
+ * Totals in cents by how each category counts. Spending is positive for money spent (refunds in spending
+ * categories reduce it); transfers are left out; uncategorized is the signed net of everything without a category.
+ */
+export function totalsByKind(transactions: TransactionRow[], categories: Category[]) {
+  const kinds = new Map(categories.map((c) => [c.id, c.kind]));
+  const totals = { spending: 0, income: 0, uncategorized: 0 };
+  for (const t of transactions) {
+    for (const { categoryId, amount } of t.allocations) {
+      const cents = Math.round(amount * 100);
+      const kind = categoryId === null ? undefined : kinds.get(categoryId);
+      if (kind === "expense") totals.spending -= cents;
+      else if (kind === "income") totals.income += cents;
+      else if (kind === undefined) totals.uncategorized += cents;
+    }
+  }
+  return totals;
+}
+
+/** Filter value meaning "no category". */
+export const UNCATEGORIZED = "\u0000uncategorized";
+
+const categoryFilter: FilterFn<typeof features, TransactionRow> = (row, _columnId, value: string) => {
+  const names = categoryNames(row.original);
+  return value === UNCATEGORIZED ? names.length === 0 : names.includes(value);
+};
+categoryFilter.autoRemove = (value?: string) => !value;
+
 const features = tableFeatures({
   rowSortingFeature,
   sortedRowModel: createSortedRowModel(),
@@ -54,6 +86,57 @@ const features = tableFeatures({
   rowPaginationFeature,
   paginatedRowModel: createPaginatedRowModel(),
 });
+
+interface CategoryActions {
+  categories: Category[];
+  onItemize: (transaction: TransactionRow) => void;
+  onSetCategory: (transaction: TransactionRow, categoryId: number | null) => void;
+}
+
+/** Provided by the table so the module-level column definitions can reach the app's callbacks. */
+const CategoryContext = createContext<CategoryActions>({ categories: [], onItemize: () => {}, onSetCategory: () => {} });
+
+function CategoryCell({ transaction }: { transaction: TransactionRow }) {
+  const { categories, onItemize, onSetCategory } = useContext(CategoryContext);
+  const { itemCount } = transaction;
+  if (itemCount > 0) {
+    return (
+      <>
+        {transaction.categories.length > 0 && <div>{transaction.categories.join(", ")}</div>}
+        <button type="button" className="link" onClick={() => onItemize(transaction)}>
+          {itemCount} {itemCount === 1 ? "item" : "items"}
+        </button>
+      </>
+    );
+  }
+  return (
+    <div className="category-cell">
+      <select
+        aria-label="Category"
+        className={transaction.categoryId === null ? "uncategorized" : undefined}
+        value={transaction.categoryId ?? ""}
+        onChange={(e) => onSetCategory(transaction, e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">Uncategorized</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <span className="category-meta">
+        {transaction.categoryRuleId !== null && (
+          <span className="tag" title="Set by an auto-categorize rule">
+            auto
+          </span>
+        )}
+        <button type="button" className="link" onClick={() => onItemize(transaction)}>
+          Split
+        </button>
+      </span>
+    </div>
+  );
+}
 
 const helper = createColumnHelper<typeof features, TransactionRow>();
 
@@ -83,6 +166,13 @@ const columns = helper.columns([
       </>
     ),
   }),
+  helper.accessor((t) => categoryNames(t).join(", "), {
+    id: "category",
+    header: "Category",
+    sortFn: "text",
+    filterFn: categoryFilter,
+    cell: ({ row }) => <CategoryCell transaction={row.original} />,
+  }),
   helper.accessor((t) => t.cardLast4 ?? "", { id: "card", header: "Card", sortFn: "text" }),
   helper.accessor("amount", {
     header: "Amount",
@@ -98,18 +188,32 @@ const initialState = {
 
 const PAGE_SIZES = [25, 50, 100, 250];
 
-export function TransactionsTable({ data }: { data: TransactionRow[] }) {
+export function TransactionsTable({ data, ...actions }: { data: TransactionRow[] } & CategoryActions) {
+  return (
+    <CategoryContext value={actions}>
+      <Transactions data={data} categories={actions.categories} />
+    </CategoryContext>
+  );
+}
+
+function Transactions({ data, categories }: { data: TransactionRow[]; categories: Category[] }) {
   const table = useTable({
     features,
     columns,
     data,
     initialState,
+    // Saving items updates one row; stay on the same page.
+    autoResetPageIndex: false,
     globalFilterFn: "includesString",
-    getColumnCanGlobalFilter: (column) => ["description", "type", "section", "accountName"].includes(column.id),
+    getColumnCanGlobalFilter: (column) => ["description", "type", "section", "accountName", "category"].includes(column.id),
   });
 
   const filteredRows = table.getFilteredRowModel().rows;
   const total = filteredRows.reduce((sum, row) => sum + row.original.amount, 0);
+  const totals = totalsByKind(
+    filteredRows.map((row) => row.original),
+    categories,
+  );
   const { pageIndex, pageSize } = table.state.pagination;
   const hasFilters = table.state.columnFilters.length > 0 || Boolean(table.state.globalFilter);
   const accountCount = table.getColumn("accountName")?.getFacetedUniqueValues().size ?? 0;
@@ -121,6 +225,8 @@ export function TransactionsTable({ data }: { data: TransactionRow[] }) {
   const dateColumn = table.getColumn("postedDate")!;
   const [dateFrom = "", dateTo = ""] = (dateColumn.getFilterValue() as [string, string] | undefined) ?? [];
   const amountColumn = table.getColumn("amount")!;
+  const categoryColumn = table.getColumn("category")!;
+  const uncategorizedCount = data.filter((t) => categoryNames(t).length === 0).length;
   const amount = (amountColumn.getFilterValue() as AmountFilter | undefined) ?? { direction: "all", min: "", max: "" };
   const setAmount = (patch: Partial<AmountFilter>) => amountColumn.setFilterValue({ ...amount, ...patch });
 
@@ -139,6 +245,21 @@ export function TransactionsTable({ data }: { data: TransactionRow[] }) {
         {accountCount > 1 && <FacetSelect table={table} columnId="accountName" label="Account" />}
         <FacetSelect table={table} columnId="section" label="Section" />
         <FacetSelect table={table} columnId="type" label="Type" />
+        <label>
+          Category
+          <select
+            value={(categoryColumn.getFilterValue() as string | undefined) ?? ""}
+            onChange={(e) => categoryColumn.setFilterValue(e.target.value || undefined)}
+          >
+            <option value="">All</option>
+            <option value={UNCATEGORIZED}>Uncategorized ({uncategorizedCount})</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.name}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           From
           <input type="date" value={dateFrom} onChange={(e) => dateColumn.setFilterValue([e.target.value, dateTo])} />
@@ -181,6 +302,18 @@ export function TransactionsTable({ data }: { data: TransactionRow[] }) {
           : `${filteredRows.length} of ${data.length} transactions`}
         {" · net "}
         <span className={total < 0 ? "debit" : "credit"}>{formatAmount(total)}</span>
+        <span title="By category. Transfers between your own accounts count as neither spending nor income.">
+          {" · spending "}
+          <span className="debit">{formatCents(totals.spending)}</span>
+          {" · income "}
+          <span className="credit">{formatCents(totals.income)}</span>
+          {totals.uncategorized !== 0 && (
+            <>
+              {" · uncategorized "}
+              <span className={totals.uncategorized < 0 ? "debit" : "credit"}>{formatCents(totals.uncategorized)}</span>
+            </>
+          )}
+        </span>
       </p>
 
       <div className="table-scroll">

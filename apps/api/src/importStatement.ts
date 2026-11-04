@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 import type { UsBankStatement } from "@kuberaxis/parser";
+import { applyRules } from "./categoryRules.js";
 import { toCents, withOccurrences } from "./fingerprint.js";
 import type { AccountImportResult, ImportResult } from "./types.js";
 
@@ -86,8 +87,21 @@ export async function importStatement(
       parsed - inserted,
     ]);
 
+    // Only this import's rows can be uncategorized new arrivals: re-imported rows keep their original import_id.
+    const categorized = await applyRules(client, { importId });
+
     await client.query("COMMIT");
-    return { importId, fileName: file.name, period: statement.period, parsed, inserted, skipped: parsed - inserted, corrected, accounts };
+    return {
+      importId,
+      fileName: file.name,
+      period: statement.period,
+      parsed,
+      inserted,
+      skipped: parsed - inserted,
+      corrected,
+      categorized,
+      accounts,
+    };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
