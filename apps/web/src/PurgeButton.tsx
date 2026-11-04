@@ -34,7 +34,7 @@ export function PurgeButton({ onPurged }: { onPurged: () => void }) {
         // Cancel takes the original button's spot so a double-click can't confirm.
         <>
           <button type="button" className="danger" onClick={() => void purge()}>
-            Delete all transactions, imports and accounts
+            Delete all transactions, imports, accounts and receipts
           </button>
           <button type="button" onClick={() => setState("idle")}>
             Cancel

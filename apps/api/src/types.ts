@@ -91,6 +91,8 @@ export interface TransactionItem {
   amount: number;
   categoryId: number | null;
   categoryName: string | null;
+  /** The receipt this item was written from, or null when entered by hand. */
+  receiptId: number | null;
 }
 
 export interface TransactionItemInput {
@@ -130,4 +132,115 @@ export interface RulePreview {
   /** How many of those are currently uncategorized. */
   uncategorized: number;
   examples: { id: string; postedDate: string; description: string; details: string[]; amount: number; categoryName: string | null }[];
+}
+
+// Receipts. See docs/design/receipts.md. Amounts are in dollars, signed so a receipt's lines add up to its
+// total: items, tax, tips, fees and deposits positive; discounts negative.
+
+export type ReceiptStatus = "pending" | "extracted" | "reviewed" | "failed";
+export type ReceiptLineKind = "item" | "discount" | "tax" | "tip" | "fee" | "deposit";
+export type PaymentMethod = "card" | "cash" | "gift_card" | "other" | "unknown";
+export type PaymentMatchStatus = "unmatched" | "suggested" | "confirmed" | "not_applicable";
+
+/** A region of the uploaded image, as fractions of its width and height (0..1). */
+export interface BoundingBox {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Receipt {
+  id: number;
+  fileId: number;
+  fileName: string;
+  contentType: string;
+  status: ReceiptStatus;
+  merchantName: string | null;
+  merchantAddress: string | null;
+  merchantPhone: string | null;
+  purchaseDate: string | null;
+  /** "HH:MM:SS", when the receipt prints a time. */
+  purchaseTime: string | null;
+  currency: string;
+  subtotal: number | null;
+  total: number | null;
+  defaultCategoryId: number | null;
+  extractor: string | null;
+  extractorVersion: string | null;
+  validationIssues: string[];
+  notes: string | null;
+  lines: ReceiptLine[];
+  payments: ReceiptPayment[];
+}
+
+export interface ReceiptLine {
+  id: string;
+  position: number;
+  kind: ReceiptLineKind;
+  description: string;
+  displayName: string | null;
+  quantity: number | null;
+  unit: string | null;
+  unitPrice: number | null;
+  amount: number;
+  sku: string | null;
+  taxCode: string | null;
+  /** For a discount on one item: that item's line id. */
+  appliesToLineId: string | null;
+  categoryId: number | null;
+  confidence: number | null;
+  bbox: BoundingBox | null;
+}
+
+export interface ReceiptPayment {
+  id: number;
+  method: PaymentMethod;
+  cardBrand: string | null;
+  cardLast4: string | null;
+  /** Positive for a purchase, negative for a refund. */
+  amount: number;
+  transactionId: string | null;
+  matchStatus: PaymentMatchStatus;
+  matchScore: number | null;
+  /** How much more the matched transaction is than this payment (a tip added later, a pre-auth); null if unmatched. */
+  amountDelta: number | null;
+}
+
+/** What an extractor (OCR, a hosted API or a vision model) returns for a receipt, whichever one it is. */
+export interface ReceiptExtraction {
+  merchant: { name: string | null; address: string | null; phone: string | null };
+  /** `date` is "YYYY-MM-DD"; `time` is "HH:MM" or "HH:MM:SS". */
+  purchasedAt: { date: string | null; time: string | null };
+  /** ISO 4217 code; null means USD. */
+  currency: string | null;
+  subtotal: number | null;
+  total: number | null;
+  lines: ReceiptExtractionLine[];
+  payments: ReceiptExtractionPayment[];
+}
+
+export interface ReceiptExtractionLine {
+  kind: ReceiptLineKind;
+  description: string;
+  quantity: number | null;
+  unit: string | null;
+  unitPrice: number | null;
+  amount: number;
+  sku: string | null;
+  taxCode: string | null;
+  /** Index into `lines` of the item a discount belongs to. */
+  appliesToIndex: number | null;
+  /** The extractor's guess at a category name; matched to an existing category when saved. */
+  suggestedCategory: string | null;
+  confidence: number | null;
+  bbox: BoundingBox | null;
+}
+
+export interface ReceiptExtractionPayment {
+  method: PaymentMethod;
+  cardBrand: string | null;
+  cardLast4: string | null;
+  amount: number;
 }

@@ -41,7 +41,7 @@ const formatCents = (cents: number) => `${cents < 0 ? "-" : ""}$${(Math.abs(cent
 
 const SELECT_ITEMS = `
   SELECT ti.id::text AS id, ti.description, (ti.amount_cents / 100.0)::float8 AS amount,
-         ti.category_id AS "categoryId", c.name AS "categoryName"
+         ti.category_id AS "categoryId", c.name AS "categoryName", ti.receipt_id AS "receiptId"
   FROM transaction_items ti LEFT JOIN categories c ON c.id = ti.category_id
   WHERE ti.transaction_id = $1
   ORDER BY ti.position`;
