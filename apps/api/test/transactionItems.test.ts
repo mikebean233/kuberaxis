@@ -90,9 +90,9 @@ describe.skipIf(!testPool)("transaction items API", () => {
     const response = await putItems([item(-30.1, "Food", groceries.id), item(-10, "Paper towels", household.id), item(-2, "Bag")]);
     expect(response.statusCode).toBe(200);
     expect(response.json<TransactionItem[]>().map(({ id: _, ...rest }) => rest)).toEqual([
-      { description: "Food", amount: -30.1, categoryId: groceries.id, categoryName: "Groceries" },
-      { description: "Paper towels", amount: -10, categoryId: household.id, categoryName: "Household" },
-      { description: "Bag", amount: -2, categoryId: null, categoryName: null },
+      { description: "Food", amount: -30.1, categoryId: groceries.id, categoryName: "Groceries", receiptId: null },
+      { description: "Paper towels", amount: -10, categoryId: household.id, categoryName: "Household", receiptId: null },
+      { description: "Bag", amount: -2, categoryId: null, categoryName: null, receiptId: null },
     ]);
 
     const fetched = await app.inject({ method: "GET", url: `/api/transactions/${transactionId}/items` });

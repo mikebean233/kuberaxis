@@ -252,7 +252,11 @@ export function buildServer({ pool, maxUploadBytes, allowPurge = false, logger =
 
   if (allowPurge) {
     app.delete("/api/data", async () => {
-      await pool.query("TRUNCATE transaction_items, transactions, imports, accounts RESTART IDENTITY");
+      // Categories and rules are settings, so they stay.
+      await pool.query(
+        `TRUNCATE receipt_match_rejections, receipt_payments, receipt_lines, receipts, receipt_files,
+                  transaction_items, transactions, imports, accounts RESTART IDENTITY`,
+      );
       return { ok: true };
     });
   }

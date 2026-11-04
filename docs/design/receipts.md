@@ -1,7 +1,8 @@
-# Receipts: data model (draft)
+# Receipts: data model
 
-Status: design draft, not implemented. The extraction approach (OCR library / hosted API / vision LLM)
-is still open; this model is meant to be independent of it.
+Status: the data model is built (`apps/api/migrations/004_receipts.sql`, `apps/api/src/receipts.ts`), with no
+API routes or UI yet. Still to build: upload, extraction, matching, and writing confirmed receipts into
+`transaction_items`. The extractor is still open; the model doesn't depend on it.
 
 ## Goals
 
@@ -26,116 +27,53 @@ is still open; this model is meant to be independent of it.
   (`applies_to_line_id`) goes to that item's category. This keeps "where did the money go" fully
   determined without making the user categorize the tax line.
 - **The transaction's amount wins over the receipt's.** Restaurant receipts are printed before the tip, gas
-  stations pre-authorize, and so on. The difference (`transaction amount − payment amount`) is stored on the
-  match and treated as one more uncategorized adjustment, prorated like tax. Large differences are flagged
-  for review rather than accepted.
-- **Transactions can be itemized without a receipt.** Implemented in `002_transaction_items.sql`:
-  `categories` plus `transaction_items` (description, signed amount, category), which either is empty or adds
-  up to the transaction exactly. This is what spending reports read. Confirming a receipt match should
-  write the receipt's per-category breakdown into `transaction_items` (marked as coming from the receipt), so
-  manual and receipt itemizations look the same downstream. That replaces the `transactions.category_id` idea
-  below; the `categories` table that already exists has no `parent_id` or `kind` yet.
+  stations pre-authorize, and so on. The difference (`transaction amount − payment amount`) is computed by the
+  `receipt_payment_matches` view rather than stored, so it can't go stale, and is treated as one more
+  uncategorized adjustment, prorated like tax. Large differences are flagged for review rather than accepted.
+- **Receipts feed `transaction_items`.** Transactions can already be itemized by hand (`transaction_items`,
+  which is either empty or adds up to the transaction exactly), and that is what spending reports read.
+  Confirming a receipt match writes the receipt's per-category breakdown there, with
+  `transaction_items.receipt_id` set, so manual and receipt itemizations look the same downstream.
 - **Keep the raw extraction.** Store the extractor's output (`jsonb`), its name and version, and per-field
   confidence where available, so we can re-run a better extractor later and so the review UI can highlight
   low-confidence fields. User edits go into the normalized columns; the raw output is never edited.
 - **Money in integer cents** like `transactions.amount_cents`. Unit prices can be fractional
   ($3.499/gal), so `unit_price_cents` is `numeric`; `amount_cents` on the line is authoritative.
 
-## Schema (proposed `002_receipts.sql`)
+## Schema
 
-```sql
-CREATE TABLE categories (
-  id         serial PRIMARY KEY,
-  parent_id  integer REFERENCES categories (id),
-  name       text NOT NULL,
-  -- 'expense' | 'income' | 'transfer': transfers are excluded from spending reports.
-  kind       text NOT NULL DEFAULT 'expense',
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE NULLS NOT DISTINCT (parent_id, name)
-);
+Implemented in `apps/api/migrations/004_receipts.sql`; read that for the columns. In summary:
 
-ALTER TABLE transactions ADD COLUMN category_id integer REFERENCES categories (id);
+| Table | Holds |
+| --- | --- |
+| `receipt_files` | The uploaded bytes, unique by SHA-256 so re-uploading finds the existing receipt |
+| `receipts` | Status (`pending` → `extracted` → `reviewed`, or `failed`), merchant, date and time, subtotal, total, default category, the extractor's raw output and name, and `validation_issues` |
+| `receipt_lines` | Signed lines in printed order: kind, description, quantity, unit price, amount, tax code, category, and the extractor's confidence and bounding box |
+| `receipt_payments` | How it was paid (method, card brand and last 4, amount) and its match: `transaction_id`, `match_status`, score |
+| `receipt_match_rejections` | Suggestions the user turned down, so matching doesn't propose them again |
+| `receipt_payment_matches` (view) | Matched payments with `amount_delta_cents`, the transaction minus the receipt |
 
--- Original uploads, kept apart from receipts so listing receipts doesn't read image bytes.
-CREATE TABLE receipt_files (
-  id           serial PRIMARY KEY,
-  sha256       text NOT NULL UNIQUE,            -- re-uploading the same file is a no-op
-  content_type text NOT NULL,                   -- image/jpeg, image/heic, application/pdf, ...
-  file_name    text NOT NULL,
-  data         bytea NOT NULL,
-  uploaded_at  timestamptz NOT NULL DEFAULT now()
-);
+What the database enforces:
 
-CREATE TABLE receipts (
-  id                  serial PRIMARY KEY,
-  file_id             integer NOT NULL REFERENCES receipt_files (id),
-  -- 'pending' (awaiting extraction) | 'extracted' (needs review) | 'reviewed' | 'failed'
-  status              text NOT NULL DEFAULT 'pending',
-  merchant_name       text,
-  merchant_address    text,
-  purchased_at        timestamptz,              -- or just a date when the receipt has no time
-  purchase_date       date,
-  currency            text NOT NULL DEFAULT 'USD',
-  subtotal_cents      bigint,
-  total_cents         bigint,
-  -- Used for items the user hasn't categorized individually.
-  default_category_id integer REFERENCES categories (id),
-  -- Extractor output, verbatim, plus what produced it.
-  extractor           text,                     -- e.g. 'claude-sonnet-5-5', 'textract-expense', 'paddleocr+rules'
-  extractor_version   text,
-  raw_extraction      jsonb,
-  validation_issues   jsonb NOT NULL DEFAULT '[]',
-  notes               text,
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  updated_at          timestamptz NOT NULL DEFAULT now()
-);
+- Every status, kind and payment method is one of the listed values.
+- An item-level discount (`applies_to_line_id`) points at a line on the same receipt (composite foreign key),
+  and only discounts can point at another line.
+- A payment is `suggested` or `confirmed` exactly when it has a `transaction_id`, and a transaction matches
+  at most one payment.
+- Deleting a receipt deletes its lines, payments and rejections; items it wrote into `transaction_items` stay,
+  with `receipt_id` cleared, as if entered by hand.
+- That the lines add up to the total is *not* enforced, since extraction is imperfect: `validateExtraction`
+  records mismatches in `validation_issues` for review instead.
 
-CREATE INDEX receipts_purchase_date_idx ON receipts (purchase_date);
+Changes from the earlier draft: categories and `transactions.category_id` already existed (from the
+categories work), so they aren't redefined; categories stay flat (no `parent_id`); the amount difference is a
+view instead of a stored column; rejections got their own table now rather than later; and a payment's
+transaction can't be deleted out from under it (purging transactions clears receipts too).
 
-CREATE TABLE receipt_lines (
-  id                 bigserial PRIMARY KEY,
-  receipt_id         integer NOT NULL REFERENCES receipts (id) ON DELETE CASCADE,
-  position           integer NOT NULL,          -- order printed on the receipt
-  -- 'item' | 'discount' | 'tax' | 'tip' | 'fee' | 'deposit' (bottle deposit etc.)
-  kind               text NOT NULL,
-  description        text NOT NULL,             -- as printed, e.g. "GV 2% MILK GAL"
-  display_name       text,                      -- user/LLM cleanup, e.g. "Great Value 2% milk, 1 gal"
-  quantity           numeric(12, 3),            -- 2, or 1.37 (lb)
-  unit               text,                      -- 'ea', 'lb', 'gal', ...
-  unit_price_cents   numeric(14, 3),
-  amount_cents       bigint NOT NULL,           -- signed; lines sum to receipts.total_cents
-  sku                text,
-  -- Tax code/flag printed beside the item ('T', 'N', 'A', ...) and on tax lines, so tax prorates
-  -- only over the items it applied to.
-  tax_code           text,
-  applies_to_line_id bigint REFERENCES receipt_lines (id) ON DELETE CASCADE,  -- item-level discounts
-  category_id        integer REFERENCES categories (id),
-  confidence         real,                      -- 0..1 from the extractor, if it gives one
-  bbox               jsonb,                     -- {page, x, y, w, h} normalized, if it gives one
-  UNIQUE (receipt_id, position)
-);
-
-CREATE TABLE receipt_payments (
-  id                 serial PRIMARY KEY,
-  receipt_id         integer NOT NULL REFERENCES receipts (id) ON DELETE CASCADE,
-  method             text NOT NULL,             -- 'card' | 'cash' | 'gift_card' | 'other' | 'unknown'
-  card_brand         text,
-  card_last4         text,
-  amount_cents       bigint NOT NULL,           -- positive for a purchase, negative for a refund
-  -- Matching. One transaction pays for at most one tender.
-  transaction_id     bigint UNIQUE REFERENCES transactions (id) ON DELETE SET NULL,
-  -- 'unmatched' | 'suggested' | 'confirmed' | 'rejected' | 'not_applicable' (cash)
-  match_status       text NOT NULL DEFAULT 'unmatched',
-  match_score        real,
-  -- (-transaction.amount_cents) - amount_cents: tip added later, pre-auth differences, FX.
-  amount_delta_cents bigint,
-  matched_at         timestamptz
-);
-```
-
-A rejected suggestion should not come back on the next matching run. If that matters early, add a small
-`receipt_match_rejections (payment_id, transaction_id)` table; otherwise `match_status = 'rejected'` with the
-transaction cleared is enough for one-candidate-at-a-time matching.
+`apps/api/src/receipts.ts` has the data access: `createReceipt` stores a file (once per content) and a pending
+receipt; `saveExtraction` writes a `ReceiptExtraction` into the tables, matches suggested category names to
+existing categories, links item discounts, adds a stand-in `unknown` payment when none was found, and refuses
+receipts that are reviewed or matched; `getReceipt` reads one back.
 
 ## Matching
 
@@ -168,7 +106,8 @@ the API; a SQL view can come later if reports need it.
 
 ## Extraction output (provider-independent)
 
-Whatever extractor we choose returns this, and the API maps it into the tables above:
+Whatever extractor we choose returns this (`ReceiptExtraction` in `apps/api/src/types.ts`), and
+`saveExtraction` maps it into the tables above:
 
 ```ts
 interface ReceiptExtraction {
