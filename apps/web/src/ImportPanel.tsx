@@ -134,7 +134,8 @@ function FileRow({ item: { name, status } }: { item: QueuedFile }) {
       return (
         <li className={`status ${issues.length ? "warning" : "success"}`}>
           <strong>{name}</strong> ({result.period.start} to {result.period.end}): {result.inserted} new, {result.skipped}{" "}
-          already imported{result.corrected > 0 && ` (${result.corrected} corrected)`}.
+          already imported{result.corrected > 0 && ` (${result.corrected} corrected)`}
+          {result.categorized > 0 && `, ${result.categorized} auto-categorized`}.
           {issues.length > 0 && (
             <>
               <p>The statement didn't fully reconcile, so some transactions may be missing or wrong:</p>

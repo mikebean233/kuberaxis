@@ -1,50 +1,28 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseUsBankStatement, type UsBankStatement } from "@kuberaxis/parser";
-import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createPool, migrate } from "../src/db.js";
 import { importStatement } from "../src/importStatement.js";
 import { buildServer } from "../src/server.js";
+import { openTestDatabase, truncateAll } from "./testDb.js";
 
 // Fictional statement: a checking account with 51 transactions and a savings account with 3.
 const SAMPLE = fileURLToPath(new URL("../../../test-data/usbank-sample-statement.pdf", import.meta.url));
 const TOTAL = 54;
-const ADMIN_URL = process.env.TEST_DATABASE_ADMIN_URL ?? "postgres://kuberaxis:kuberaxis@localhost:5432/kuberaxis";
-const TEST_DB = "kuberaxis_test";
+const testPool = existsSync(SAMPLE) ? await openTestDatabase("kuberaxis_test") : null;
+if (!testPool) console.warn("Skipping import tests: needs Postgres (npm run db:up)");
 
-async function databaseAvailable(): Promise<boolean> {
-  const client = new pg.Client({ connectionString: ADMIN_URL, connectionTimeoutMillis: 1000 });
-  try {
-    await client.connect();
-    const { rowCount } = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [TEST_DB]);
-    if (!rowCount) await client.query(`CREATE DATABASE ${TEST_DB}`);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await client.end().catch(() => {});
-  }
-}
-
-const available = existsSync(SAMPLE) && (await databaseAvailable());
-if (!available) console.warn("Skipping import tests: needs Postgres (npm run db:up)");
-
-describe.skipIf(!available)("importStatement", () => {
-  const testUrl = new URL(ADMIN_URL);
-  testUrl.pathname = `/${TEST_DB}`;
-  let pool: pg.Pool;
+describe.skipIf(!testPool)("importStatement", () => {
+  const pool = testPool!;
   let statement: UsBankStatement;
   let data: Uint8Array;
 
   beforeAll(async () => {
-    pool = createPool(testUrl.toString());
-    await migrate(pool);
     data = readFileSync(SAMPLE);
     statement = await parseUsBankStatement(data, { strict: true });
   });
-  beforeEach(() => pool.query("TRUNCATE transactions, imports, accounts RESTART IDENTITY"));
-  afterAll(() => pool?.end());
+  beforeEach(() => truncateAll(pool));
+  afterAll(() => pool.end());
 
   const count = async () => Number((await pool.query("SELECT count(*) FROM transactions")).rows[0].count);
 
