@@ -140,7 +140,7 @@ export async function deleteAccount(pool: pg.Pool, id: number, moveTo: number | 
   }
 }
 
-/** Guesses the type from a statement's product name, e.g. "U.S. BANK GOLD CHECKING". */
+/** Guesses the type from a statement's product name, e.g. "U.S. BANK SMARTLY CHECKING". */
 export function guessKind(statementName: string): AccountKind {
   if (/CHECKING/i.test(statementName)) return "checking";
   if (/SAVINGS|MONEY MARKET/i.test(statementName)) return "savings";

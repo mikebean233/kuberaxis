@@ -48,7 +48,7 @@ export interface Account {
   /** As printed on statements (often masked); '' when unknown. */
   accountNumber: string;
   /**
-   * Product name as printed on PDF statements, e.g. "U.S. BANK GOLD CHECKING". With bank and account number it's
+   * Product name as printed on PDF statements, e.g. "U.S. BANK SMARTLY CHECKING". With bank and account number it's
    * how PDF imports find the account; null for an account no statement has matched yet.
    */
   statementName: string | null;
