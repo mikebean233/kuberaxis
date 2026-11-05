@@ -1,12 +1,15 @@
 import multipart from "@fastify/multipart";
-import { parseUsBankStatement, UsBankParseError } from "@kuberaxis/parser";
+import { isUsBankCsv, parseUsBankCsv, parseUsBankStatement, UsBankParseError } from "@kuberaxis/parser";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import type pg from "pg";
-import { importStatement } from "./importStatement.js";
+import { AccountError, createAccount, deleteAccount, listAccounts, updateAccount } from "./accounts.js";
+import { ImportAccountError, importStatement } from "./importStatement.js";
 import { CategoryError, categoryUsage, deleteCategory } from "./categories.js";
 import { applyRulesToAll, createRule, deleteRule, listRules, previewRule, RuleError, updateRule } from "./categoryRules.js";
 import { getTransactionItems, ItemsError, replaceTransactionItems } from "./transactionItems.js";
 import type {
+  Account,
+  AccountInput,
   ApiError,
   ApplyRulesResult,
   Category,
@@ -62,6 +65,43 @@ export function buildServer({ pool, maxUploadBytes, allowPurge = false, logger =
     );
     return rows;
   });
+
+  app.get("/api/accounts", async (): Promise<Account[]> => listAccounts(pool));
+
+  app.post<{ Body: AccountInput }>(
+    "/api/accounts",
+    { schema: { body: accountBodySchema }, attachValidation: true },
+    async (request, reply): Promise<Account | ApiError> => {
+      if (request.validationError) return reply.code(400).send({ error: request.validationError.message });
+      return sendAccountError(reply, () => createAccount(pool, request.body));
+    },
+  );
+
+  app.put<{ Params: { id: string }; Body: AccountInput }>(
+    "/api/accounts/:id",
+    { schema: { params: idParamsSchema, body: accountBodySchema }, attachValidation: true },
+    async (request, reply): Promise<Account | ApiError> => {
+      if (request.validationError) {
+        const notFound = request.validationError.validationContext === "params";
+        return reply.code(notFound ? 404 : 400).send({ error: notFound ? "Account not found" : request.validationError.message });
+      }
+      return sendAccountError(reply, () => updateAccount(pool, Number(request.params.id), request.body));
+    },
+  );
+
+  // Deletes an account and its transactions; `moveTo` moves the transactions to another account instead (a merge).
+  app.delete<{ Params: { id: string }; Querystring: { moveTo?: string } }>(
+    "/api/accounts/:id",
+    { schema: { params: idParamsSchema, querystring: moveToQuerySchema }, attachValidation: true },
+    async (request, reply): Promise<{ moved: number; deleted: number } | ApiError> => {
+      if (request.validationError) {
+        const notFound = request.validationError.validationContext === "params";
+        return reply.code(notFound ? 404 : 400).send({ error: notFound ? "Account not found" : request.validationError.message });
+      }
+      const moveTo = request.query.moveTo ? Number(request.query.moveTo) : null;
+      return sendAccountError(reply, () => deleteAccount(pool, Number(request.params.id), moveTo));
+    },
+  );
 
   app.get("/api/categories", async (): Promise<Category[]> => {
     const { rows } = await pool.query<Category>("SELECT id, name, kind FROM categories ORDER BY lower(name)");
@@ -230,21 +270,45 @@ export function buildServer({ pool, maxUploadBytes, allowPurge = false, logger =
 
   app.post("/api/imports", async (request, reply): Promise<ImportResult | ApiError> => {
     const file = await request.file();
-    if (!file) return reply.code(400).send({ error: "Attach a PDF in the 'file' field" });
+    if (!file) return reply.code(400).send({ error: "Attach a statement PDF or transaction CSV in the 'file' field" });
 
     const data = await file.toBuffer();
     if (file.file.truncated) return reply.code(413).send({ error: "File is too large" });
-    if (data.subarray(0, 5).toString("latin1") !== "%PDF-") {
-      return reply.code(415).send({ error: "That file isn't a PDF" });
-    }
 
     let statement;
-    try {
-      statement = await parseUsBankStatement(data);
-    } catch (err) {
-      request.log.warn({ err }, "statement parse failed");
-      const issues = err instanceof UsBankParseError ? err.issues : [];
-      return reply.code(422).send({ error: "Couldn't read this as a U.S. Bank statement", issues });
+    if (data.subarray(0, 5).toString("latin1") === "%PDF-") {
+      try {
+        statement = await parseUsBankStatement(data);
+      } catch (err) {
+        request.log.warn({ err }, "statement parse failed");
+        const issues = err instanceof UsBankParseError ? err.issues : [];
+        return reply.code(422).send({ error: "Couldn't read this as a U.S. Bank statement", issues });
+      }
+    } else {
+      const text = data.toString("utf8");
+      if (!isUsBankCsv(text)) {
+        return reply
+          .code(415)
+          .send({ error: "That file isn't a statement PDF or a U.S. Bank CSV (Date, Transaction, Name, Memo, Amount)" });
+      }
+      // A CSV doesn't say which account it's from, so the form picks one (sent before the file).
+      const field = file.fields.accountId;
+      const value = field && !Array.isArray(field) && field.type === "field" ? String(field.value) : "";
+      if (!/^[1-9][0-9]{0,9}$/.test(value)) {
+        return reply.code(400).send({ error: "Choose the account this CSV belongs to" });
+      }
+      try {
+        statement = parseUsBankCsv(text);
+      } catch (err) {
+        const issues = err instanceof UsBankParseError ? err.issues : [];
+        return reply.code(422).send({ error: "Couldn't read this as a U.S. Bank CSV", issues });
+      }
+      try {
+        return await importStatement(pool, statement, { name: file.filename, data }, { accountId: Number(value) });
+      } catch (err) {
+        if (!(err instanceof ImportAccountError)) throw err;
+        return reply.code(400).send({ error: err.message });
+      }
     }
 
     return importStatement(pool, statement, { name: file.filename, data });
@@ -255,7 +319,7 @@ export function buildServer({ pool, maxUploadBytes, allowPurge = false, logger =
       // Categories and rules are settings, so they stay.
       await pool.query(
         `TRUNCATE receipt_match_rejections, receipt_payments, receipt_lines, receipts, receipt_files,
-                  transaction_items, transactions, imports, accounts RESTART IDENTITY`,
+                  transaction_items, transactions, import_accounts, imports, accounts RESTART IDENTITY`,
       );
       return { ok: true };
     });
@@ -284,6 +348,28 @@ const moveToQuerySchema = {
   properties: { moveTo: { type: "string", pattern: "^[1-9][0-9]{0,9}$" } },
   additionalProperties: false,
 } as const;
+
+const accountBodySchema = {
+  type: "object",
+  properties: {
+    name: { type: "string", maxLength: 100 },
+    kind: { enum: ["checking", "savings", "credit_card", "other"] },
+    bank: { type: "string", maxLength: 100 },
+    accountNumber: { type: "string", maxLength: 50 },
+    statementName: { type: ["string", "null"], maxLength: 200 },
+  },
+  required: ["name", "kind", "bank", "accountNumber"],
+  additionalProperties: false,
+} as const;
+
+async function sendAccountError<T>(reply: FastifyReply, run: () => Promise<T>): Promise<T | ApiError> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!(err instanceof AccountError)) throw err;
+    return reply.code(err.statusCode).send({ error: err.message });
+  }
+}
 
 const kindSchema = { enum: ["expense", "income", "transfer"] } as const;
 

@@ -36,7 +36,42 @@ export interface Allocation {
   amount: number;
 }
 
+export type AccountKind = "checking" | "savings" | "credit_card" | "other";
+
+/** A bank account or card that transactions belong to. */
+export interface Account {
+  id: number;
+  /** What the user calls it; starts as the statement's product name. */
+  name: string;
+  kind: AccountKind;
+  bank: string;
+  /** As printed on statements (often masked); '' when unknown. */
+  accountNumber: string;
+  /**
+   * Product name as printed on PDF statements, e.g. "U.S. BANK GOLD CHECKING". With bank and account number it's
+   * how PDF imports find the account; null for an account no statement has matched yet.
+   */
+  statementName: string | null;
+  createdAt: string;
+  transactionCount: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  importCount: number;
+  lastImportedAt: string | null;
+}
+
+export interface AccountInput {
+  name: string;
+  kind: AccountKind;
+  bank: string;
+  accountNumber: string;
+  statementName?: string | null;
+}
+
 export interface AccountImportResult {
+  accountId: number;
+  /** True when this import created the account. */
+  accountCreated: boolean;
   accountName: string;
   accountNumber: string;
   parsed: number;

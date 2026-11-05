@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  fetchAccounts,
   fetchCategories,
   fetchTransactions,
   setTransactionCategory,
+  type Account,
   type Category,
   type TransactionItem,
   type TransactionRow,
 } from "./api";
+import { AccountsPanel } from "./AccountsPanel";
 import { CategoriesPanel } from "./CategoriesPanel";
 import { HomePage } from "./HomePage";
 import { ImportPanel } from "./ImportPanel";
@@ -20,6 +23,7 @@ const TABS = [
   { id: "home", label: "Home" },
   { id: "spending", label: "Spending" },
   { id: "transactions", label: "Transactions" },
+  { id: "accounts", label: "Accounts" },
   { id: "categories", label: "Categories" },
   { id: "rules", label: "Rules" },
   { id: "import", label: "Import" },
@@ -47,6 +51,7 @@ export function App() {
   const [tab, setTab] = useTab();
   const [transactions, setTransactions] = useState<TransactionRow[] | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [itemizing, setItemizing] = useState<TransactionRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Bumped on purge to remount the import panel and clear its results.
@@ -54,9 +59,14 @@ export function App() {
 
   const load = useCallback(async () => {
     try {
-      const [loaded, loadedCategories] = await Promise.all([fetchTransactions(), fetchCategories()]);
+      const [loaded, loadedCategories, loadedAccounts] = await Promise.all([
+        fetchTransactions(),
+        fetchCategories(),
+        fetchAccounts(),
+      ]);
       setTransactions(loaded);
       setCategories(loadedCategories);
+      setAccounts(loadedAccounts);
       setError(null);
     } catch (err) {
       setError(`Couldn't load transactions: ${(err as Error).message}`);
@@ -146,13 +156,14 @@ export function App() {
               <h1>Import</h1>
               <p className="muted">New transactions are categorized by your rules as they come in.</p>
             </header>
-            <ImportPanel key={generation} onImported={load} />
+            <ImportPanel key={generation} onImported={load} accounts={accounts} onAccountAdded={load} />
           </>
         )}
+        {tab === "accounts" && <AccountsPanel accounts={accounts} onChanged={load} />}
         {tab === "categories" && <CategoriesPanel categories={categories} onChanged={categoryChanged} onDeleted={load} />}
         {tab === "rules" && <RulesPanel categories={categories} uncategorizedCount={uncategorizedCount} onApplied={load} />}
         {transactions === null ? (
-          !error && tab !== "import" && tab !== "categories" && tab !== "rules" && <p className="muted">Loading…</p>
+          !error && tab !== "import" && tab !== "accounts" && tab !== "categories" && tab !== "rules" && <p className="muted">Loading…</p>
         ) : (
           <>
             {tab === "home" && <HomePage transactions={transactions} categories={categories} onNavigate={setTab} />}

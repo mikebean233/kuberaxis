@@ -30,5 +30,5 @@ export async function openTestDatabase(name: string): Promise<pg.Pool | null> {
 export const truncateAll = (pool: pg.Pool) =>
   pool.query(
     `TRUNCATE receipt_match_rejections, receipt_payments, receipt_lines, receipts, receipt_files,
-              transaction_items, transactions, imports, accounts, category_rules, categories RESTART IDENTITY`,
+              transaction_items, transactions, import_accounts, imports, accounts, category_rules, categories RESTART IDENTITY`,
   );

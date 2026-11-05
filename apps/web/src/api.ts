@@ -1,4 +1,7 @@
 import type {
+  Account,
+  AccountInput,
+  AccountKind,
   Allocation,
   ApiError,
   ApplyRulesResult,
@@ -17,6 +20,9 @@ import type {
 } from "@kuberaxis/api/types";
 
 export type {
+  Account,
+  AccountInput,
+  AccountKind,
   Allocation,
   ApplyRulesResult,
   Category,
@@ -54,6 +60,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const fetchTransactions = () => request<TransactionRow[]>("/api/transactions");
 
+export const fetchAccounts = () => request<Account[]>("/api/accounts");
+export const createAccount = (input: AccountInput) => request<Account>("/api/accounts", json("POST", input));
+export const updateAccount = (id: number, input: AccountInput) => request<Account>(`/api/accounts/${id}`, json("PUT", input));
+export const deleteAccount = (id: number, moveTo: number | null) =>
+  request<{ moved: number; deleted: number }>(`/api/accounts/${id}${moveTo === null ? "" : `?moveTo=${moveTo}`}`, { method: "DELETE" });
+
 export const fetchCategories = () => request<Category[]>("/api/categories");
 
 export const createCategory = (name: string, kind?: CategoryKind) =>
@@ -90,8 +102,11 @@ export const applyRules = (reapply: boolean) => request<ApplyRulesResult>("/api/
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: JSON_HEADERS, body: JSON.stringify(body) });
 
-export function uploadStatement(file: File): Promise<ImportResult> {
+/** Uploads a statement PDF or transaction CSV; a CSV needs the account it belongs to. */
+export function uploadStatement(file: File, accountId?: number): Promise<ImportResult> {
   const form = new FormData();
+  // Before the file, so the server has it when it reads the file.
+  if (accountId !== undefined) form.append("accountId", String(accountId));
   form.append("file", file);
   return request<ImportResult>("/api/imports", { method: "POST", body: form });
 }
