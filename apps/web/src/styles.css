@@ -98,6 +98,19 @@ button.link { border: none; background: none; padding: 0; color: var(--accent); 
   color: var(--muted);
 }
 .dropzone p { margin: 0; }
+.csv-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; }
+.csv-account select { max-width: 100%; }
+.csv-account .add-category { margin-left: 0; }
+.csv-account-help { flex-basis: 100%; margin: 0; font-size: 12px; }
+.accounts .add-category { margin-left: 0; }
+.account-table td:first-child { width: 50%; }
+.account-meta { font-size: 12px; margin-top: 2px; white-space: normal; }
+.account-table td.row-actions { white-space: nowrap; }
+.account-table td.row-actions .link + .link { margin-left: 12px; }
+.account-table tr.selected.edit { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.account-edit { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; padding: 6px 0; white-space: normal; }
+.account-edit label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1 1 200px; }
+.account-edit label .muted { font-size: 11px; }
 .dropzone.dragging { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
 .status { margin: 12px 0 0; padding: 10px 12px; border-radius: 6px; }

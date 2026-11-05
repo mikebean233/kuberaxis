@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 import type { UsBankStatement } from "@kuberaxis/parser";
+import { findOrCreateStatementAccount } from "./accounts.js";
 import { applyRules } from "./categoryRules.js";
 import { toCents, withOccurrences } from "./fingerprint.js";
 import type { AccountImportResult, ImportResult } from "./types.js";
@@ -8,11 +9,15 @@ import type { AccountImportResult, ImportResult } from "./types.js";
 /**
  * Stores a parsed statement, skipping transactions that are already in the database.
  * Runs in a single database transaction, so a failed import leaves nothing behind.
+ *
+ * Each account in the statement goes to the account with the same bank, number and statement name, or a new one;
+ * `accountId` instead puts everything into that account (a CSV, which doesn't say which account it's from).
  */
 export async function importStatement(
   pool: pg.Pool,
   statement: UsBankStatement,
   file: { name: string; data: Uint8Array },
+  options: { accountId?: number } = {},
 ): Promise<ImportResult> {
   const client = await pool.connect();
   try {
@@ -32,7 +37,10 @@ export async function importStatement(
     const accounts: AccountImportResult[] = [];
     for (const account of statement.accounts) {
       const accountNumber = account.accountNumber ?? statement.accountNumber ?? "";
-      const accountId = await upsertAccount(client, statement.bank, accountNumber, account.name);
+      const { id: accountId, created: accountCreated } =
+        options.accountId === undefined
+          ? await findOrCreateStatementAccount(client, statement.bank, accountNumber, account.name)
+          : { id: await lockAccount(client, options.accountId), created: false };
 
       const rows = withOccurrences(account.transactions).map(({ transaction: t, fingerprint, occurrence }) => ({
         posted_date: t.date,
@@ -66,9 +74,25 @@ export async function importStatement(
       );
 
       const inserted = written.filter((w) => w.inserted).length;
+      const {
+        rows: [saved],
+      } = await client.query<{ name: string; accountNumber: string }>(
+        `INSERT INTO import_accounts (import_id, account_id, parsed_count, inserted_count, skipped_count, validation_issues)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (import_id, account_id) DO UPDATE SET
+           parsed_count = import_accounts.parsed_count + EXCLUDED.parsed_count,
+           inserted_count = import_accounts.inserted_count + EXCLUDED.inserted_count,
+           skipped_count = import_accounts.skipped_count + EXCLUDED.skipped_count,
+           validation_issues = import_accounts.validation_issues || EXCLUDED.validation_issues
+         RETURNING (SELECT name FROM accounts WHERE id = $2) AS name,
+                   (SELECT account_number FROM accounts WHERE id = $2) AS "accountNumber"`,
+        [importId, accountId, rows.length, inserted, rows.length - inserted, JSON.stringify(account.validation.issues)],
+      );
       accounts.push({
-        accountName: account.name,
-        accountNumber,
+        accountId,
+        accountCreated,
+        accountName: saved!.name,
+        accountNumber: saved!.accountNumber,
         parsed: rows.length,
         inserted,
         skipped: rows.length - inserted,
@@ -110,15 +134,13 @@ export async function importStatement(
   }
 }
 
-async function upsertAccount(client: pg.PoolClient, bank: string, accountNumber: string, name: string): Promise<number> {
-  // The no-op update makes RETURNING yield the id for existing rows too.
-  const { rows } = await client.query<{ id: number }>(
-    `INSERT INTO accounts (bank, account_number, name) VALUES ($1, $2, $3)
-     ON CONFLICT (bank, account_number, name) DO UPDATE SET name = EXCLUDED.name
-     RETURNING id`,
-    [bank, accountNumber, name],
-  );
-  return rows[0]!.id;
+/** Locks the account for the import, so it can't be deleted halfway through. */
+async function lockAccount(client: pg.PoolClient, id: number): Promise<number> {
+  const { rowCount } = await client.query("SELECT 1 FROM accounts WHERE id = $1 FOR SHARE", [id]);
+  if (!rowCount) throw new ImportAccountError("That account doesn't exist");
+  return id;
 }
+
+export class ImportAccountError extends Error {}
 
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
