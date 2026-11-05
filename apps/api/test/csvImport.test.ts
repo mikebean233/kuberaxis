@@ -66,14 +66,14 @@ describe.skipIf(!testPool)("CSV import", () => {
     });
 
     const { rows } = await pool.query(
-      `SELECT t.description, t.amount_cents::int AS cents, c.name AS category
+      `SELECT t.description, t.details, t.amount_cents::int AS cents, c.name AS category
        FROM transactions t LEFT JOIN categories c ON c.id = t.category_id ORDER BY t.posted_date, t.id`,
     );
     expect(rows).toEqual([
-      { description: "SOMEWHERE LOCAL", cents: -1200, category: null },
-      { description: "PAYMENT THANK YOU", cents: 25000, category: "Credit Card Payment" },
-      { description: "STARBUCKS STORE 00001 ANYTOWN ST", cents: -525, category: "Coffee" },
-      { description: "STARBUCKS STORE 00001 ANYTOWN ST", cents: -525, category: "Coffee" },
+      { description: "SOMEWHERE LOCAL", details: [], cents: -1200, category: null },
+      { description: "PAYMENT THANK YOU", details: [], cents: 25000, category: "Credit Card Payment" },
+      { description: "STARBUCKS STORE 00001", details: ["ANYTOWN ST"], cents: -525, category: "Coffee" },
+      { description: "STARBUCKS STORE 00001", details: ["ANYTOWN ST"], cents: -525, category: "Coffee" },
     ]);
 
     const [account] = (await app.inject({ url: "/api/accounts" })).json<Account[]>();

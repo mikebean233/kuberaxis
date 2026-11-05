@@ -20,8 +20,8 @@ export function isUsBankCsv(text: string): boolean {
 
 /**
  * Reads a U.S. Bank transaction download (Date, Transaction, Name, Memo, Amount) into the same shape as a
- * parsed statement, so it imports and de-duplicates like one. Name becomes the description, with the memo
- * appended. Amounts are already signed (debits negative). Any unreadable row rejects the whole file.
+ * parsed statement, so it imports and de-duplicates like one. Name becomes the description and the memo a
+ * detail line beneath it, the way a statement prints a transaction's continuation line. Amounts are already signed (debits negative). Any unreadable row rejects the whole file.
  */
 export function parseUsBankCsv(text: string, options: CsvImportOptions = {}): UsBankStatement {
   const [header, ...records] = parseCsv(text.replace(/^﻿/, "")).filter((r) => r.some((cell) => cell.trim()));
@@ -54,8 +54,8 @@ export function parseUsBankCsv(text: string, options: CsvImportOptions = {}): Us
       date,
       section: amount < 0 ? "Debits" : "Credits",
       type: kind || (amount < 0 ? "DEBIT" : "CREDIT"),
-      description: memo ? `${name} ${memo}` : name,
-      details: [],
+      description: name,
+      details: memo ? [memo] : [],
       refNumber: null,
       amount,
       transactionDate: null,

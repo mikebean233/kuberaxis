@@ -13,16 +13,16 @@ const SAMPLE = [
 const options = { accountName: "U.S. Bank Credit Card" };
 
 describe("parseUsBankCsv", () => {
-  it("reads rows as signed transactions with the memo appended to the description", () => {
+  it("reads rows as signed transactions with the memo as a detail line", () => {
     const statement = parseUsBankCsv(SAMPLE, options);
     expect(statement.period).toEqual({ start: "2026-10-18", end: "2026-10-21" });
     const [account] = statement.accounts;
     expect(account!.name).toBe("U.S. Bank Credit Card");
     expect(account!.validation).toEqual({ ok: true, issues: [] });
-    expect(account!.transactions.map((t) => [t.date, t.type, t.description, t.amount, t.section])).toEqual([
-      ["2026-10-21", "DEBIT", "GROCERY OUTLET #123 ANYTOWN ST; 24000000000000000000000; 05411", -107.4, "Debits"],
-      ["2026-10-19", "CREDIT", "PAYMENT THANK YOU", 2706.36, "Credits"],
-      ["2026-10-18", "DEBIT", "COFFEE, TEA & CO", -4.5, "Debits"],
+    expect(account!.transactions.map((t) => [t.date, t.type, t.description, t.details, t.amount, t.section])).toEqual([
+      ["2026-10-21", "DEBIT", "GROCERY OUTLET #123", ["ANYTOWN ST; 24000000000000000000000; 05411"], -107.4, "Debits"],
+      ["2026-10-19", "CREDIT", "PAYMENT THANK YOU", [], 2706.36, "Credits"],
+      ["2026-10-18", "DEBIT", "COFFEE, TEA & CO", [], -4.5, "Debits"],
     ]);
   });
 
