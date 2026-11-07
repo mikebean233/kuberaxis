@@ -16,12 +16,12 @@ import { ImportPanel } from "./ImportPanel";
 import { ItemizeDialog } from "./ItemizeDialog";
 import { PurgeButton } from "./PurgeButton";
 import { RulesPanel } from "./RulesPanel";
-import { SpendingPage } from "./SpendingPage";
+import { CashFlowPage } from "./CashFlowPage";
 import { TransactionsTable } from "./TransactionsTable";
 
 const TABS = [
   { id: "home", label: "Home" },
-  { id: "spending", label: "Spending" },
+  { id: "cashflow", label: "Cash flow" },
   { id: "transactions", label: "Transactions" },
   { id: "accounts", label: "Accounts" },
   { id: "categories", label: "Categories" },
@@ -32,7 +32,9 @@ const TABS = [
 type Tab = (typeof TABS)[number]["id"];
 
 const tabFromHash = (): Tab => {
-  const id = window.location.hash.replace(/^#\/?/, "");
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  // The cash flow page used to be "spending"; keep old links and bookmarks working.
+  const id = raw === "spending" ? "cashflow" : raw;
   return TABS.some((t) => t.id === id) ? (id as Tab) : "home";
 };
 
@@ -167,7 +169,7 @@ export function App() {
         ) : (
           <>
             {tab === "home" && <HomePage transactions={transactions} categories={categories} onNavigate={setTab} />}
-            {tab === "spending" && <SpendingPage transactions={transactions} categories={categories} />}
+            {tab === "cashflow" && <CashFlowPage transactions={transactions} categories={categories} />}
             {tab === "transactions" && (
               <>
                 <header className="page-head">

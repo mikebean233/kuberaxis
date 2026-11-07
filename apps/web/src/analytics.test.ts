@@ -5,7 +5,8 @@ import {
   monthRangeLabel,
   monthsEnding,
   niceTicks,
-  rankSpendingCategories,
+  amountsByCategory,
+  rankCategories,
   spendingByCategory,
   totalsByPeriod,
   UNCATEGORIZED_ID,
@@ -93,8 +94,19 @@ describe("totals", () => {
     expect(Object.fromEntries(byCategory)).toEqual({ 1: 7000, 4: 1550, [UNCATEGORIZED_ID]: 2000 });
   });
 
-  it("ranks categories by all-time spending", () => {
-    expect(rankSpendingCategories(data, categories)).toEqual([4, 1]);
+  it("breaks income down by category, leaving out uncategorized money in", () => {
+    const withReversal = [
+      ...data,
+      tx("2026-09-20", [{ categoryId: 2, amount: -100 }]), // reversed deposit
+      tx("2026-09-21", [{ categoryId: null, amount: 75 }]),
+    ];
+    const byCategory = amountsByCategory(withReversal, categories, "income", ["2026-09"], monthOf).get("2026-09")!;
+    expect(Object.fromEntries(byCategory)).toEqual({ 2: 190000 });
+  });
+
+  it("ranks categories by all-time spending or income", () => {
+    expect(rankCategories(data, categories)).toEqual([4, 1]);
+    expect(rankCategories(data, categories, "income")).toEqual([2]);
   });
 });
 

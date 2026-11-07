@@ -107,17 +107,24 @@ export function totalsByPeriod(
 /** Id used for money out without a category in spending breakdowns. */
 export const UNCATEGORIZED_ID = -1;
 
+/** Which side of the ledger a category breakdown covers. */
+export type FlowKind = "expense" | "income";
+
 /**
- * Spending in cents per period and category. Spending categories count net of refunds; uncategorized money
+ * Cents per period and category for one kind of category, counted positive in the direction of that kind:
+ * spending is money out net of refunds, income is money in net of reversals. For spending, uncategorized money
  * out counts too (under UNCATEGORIZED_ID), since it's most likely spending that just isn't categorized yet.
+ * Uncategorized money in is left out of income: on a card statement it's mostly payments and refunds.
  */
-export function spendingByCategory(
+export function amountsByCategory(
   transactions: TransactionRow[],
   categories: Category[],
+  kind: FlowKind,
   periods: string[],
   periodOf: (iso: string) => string,
 ): Map<string, Map<number, number>> {
   const kinds = new Map(categories.map((c) => [c.id, c.kind]));
+  const sign = kind === "expense" ? -1 : 1;
   const result = new Map(periods.map((p) => [p, new Map<number, number>()]));
   for (const t of transactions) {
     const bucket = result.get(periodOf(spendDate(t)));
@@ -126,22 +133,30 @@ export function spendingByCategory(
       const cents = Math.round(amount * 100);
       let id: number;
       if (categoryId === null) {
-        if (cents >= 0) continue;
+        if (kind !== "expense" || cents >= 0) continue;
         id = UNCATEGORIZED_ID;
-      } else if (kinds.get(categoryId) === "expense") {
+      } else if (kinds.get(categoryId) === kind) {
         id = categoryId;
       } else {
         continue;
       }
-      bucket.set(id, (bucket.get(id) ?? 0) - cents);
+      bucket.set(id, (bucket.get(id) ?? 0) + sign * cents);
     }
   }
   return result;
 }
 
-/** Category ids ordered by total spending across all of `transactions`, largest first. */
-export function rankSpendingCategories(transactions: TransactionRow[], categories: Category[]): number[] {
-  const all = spendingByCategory(transactions, categories, ["all"], () => "all").get("all")!;
+/** Spending in cents per period and category; see amountsByCategory. */
+export const spendingByCategory = (
+  transactions: TransactionRow[],
+  categories: Category[],
+  periods: string[],
+  periodOf: (iso: string) => string,
+) => amountsByCategory(transactions, categories, "expense", periods, periodOf);
+
+/** Category ids of one kind ordered by their total across all of `transactions`, largest first. */
+export function rankCategories(transactions: TransactionRow[], categories: Category[], kind: FlowKind = "expense"): number[] {
+  const all = amountsByCategory(transactions, categories, kind, ["all"], () => "all").get("all")!;
   return [...all.entries()]
     .filter(([id, cents]) => id !== UNCATEGORIZED_ID && cents > 0)
     .sort((a, b) => b[1] - a[1])
