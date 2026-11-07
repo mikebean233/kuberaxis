@@ -198,3 +198,137 @@ export function niceTicks(max: number, target = 4): number[] {
   for (let v = 0; v < max + step * 0.999; v += step) ticks.push(v);
   return ticks;
 }
+
+/** How long a pivot period is. */
+export type PeriodSize = "month" | "quarter" | "half" | "year";
+
+/** A span of dates, both ends inclusive ("YYYY-MM-DD"). */
+export interface DateSpan {
+  key: string;
+  label: string;
+  start: string;
+  end: string;
+}
+
+const MONTHS_IN: Record<PeriodSize, number> = { month: 1, quarter: 3, half: 6, year: 12 };
+
+/** The period of `size` containing `iso`: "2026-09" / "2026-Q3" / "2026-H2" / "2026". */
+export function spanOf(size: PeriodSize, iso: string): DateSpan {
+  const year = iso.slice(0, 4);
+  const index = Math.floor((Number(iso.slice(5, 7)) - 1) / MONTHS_IN[size]);
+  const firstMonth = `${year}-${String(index * MONTHS_IN[size] + 1).padStart(2, "0")}`;
+  const lastMonth = addMonths(firstMonth, MONTHS_IN[size] - 1);
+  const key = { month: firstMonth, quarter: `${year}-Q${index + 1}`, half: `${year}-H${index + 1}`, year }[size];
+  const label = {
+    month: monthLabel(firstMonth, true),
+    quarter: `Q${index + 1} ${year}`,
+    half: `${index === 0 ? "Jan – Jun" : "Jul – Dec"} ${year}`,
+    year,
+  }[size];
+  return { key, label, start: `${firstMonth}-01`, end: endOfMonth(lastMonth) };
+}
+
+function addMonths(month: MonthKey, count: number): MonthKey {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1 + count, 1)).toISOString().slice(0, 7);
+}
+
+/** Every period of `size` from the one containing `first` to the one containing `last`, newest first. */
+export function spansBetween(size: PeriodSize, first: string, last: string): DateSpan[] {
+  const spans: DateSpan[] = [];
+  for (let span = spanOf(size, last); span.end >= first; span = spanOf(size, addMonths(span.start.slice(0, 7), -1))) {
+    spans.push(span);
+  }
+  return spans;
+}
+
+/** The earliest spend date, or null when there are no transactions. */
+export function earliestDate(transactions: TransactionRow[]): string | null {
+  let earliest: string | null = null;
+  for (const t of transactions) {
+    const date = spendDate(t);
+    if (earliest === null || date < earliest) earliest = date;
+  }
+  return earliest;
+}
+
+/** Where a pivot puts money: counted as income or spending, or shown but not counted. */
+export type PivotSection = "income" | "expense" | "other";
+
+/** One transaction's part in a pivot category. */
+export interface PivotEntry {
+  transaction: TransactionRow;
+  /** Its contribution, signed like the category's total. */
+  cents: number;
+  /** True when the rest of the transaction is in other categories. */
+  partial: boolean;
+}
+
+export interface PivotCategory {
+  /** A category id, UNCATEGORIZED_ID for uncategorized money out, UNCATEGORIZED_IN_ID for money in. */
+  id: number;
+  total: number;
+  entries: PivotEntry[];
+}
+
+export interface PivotGroup {
+  section: PivotSection;
+  total: number;
+  categories: PivotCategory[];
+}
+
+/** Id for uncategorized money in, which (like transfers) is shown in a pivot but not counted as income. */
+export const UNCATEGORIZED_IN_ID = -3;
+
+/**
+ * Everything dated within `span`, by section and category, with the transactions behind each category. Income
+ * counts money in and spending money out (each net of reversals and refunds), the same way as the category
+ * breakdowns, including uncategorized money out under spending. Transfers and uncategorized money in are kept
+ * under "other", signed like transaction amounts.
+ */
+export function pivotByCategory(
+  transactions: TransactionRow[],
+  categories: Category[],
+  span: { start: string; end: string },
+): PivotGroup[] {
+  const kinds = new Map(categories.map((c) => [c.id, c.kind]));
+  const sections = new Map<PivotSection, Map<number, PivotCategory>>([
+    ["income", new Map()],
+    ["expense", new Map()],
+    ["other", new Map()],
+  ]);
+  for (const t of transactions) {
+    const date = spendDate(t);
+    if (date < span.start || date > span.end) continue;
+    // A transaction itemized into several parts of one category shows once there, with those parts combined.
+    const parts = new Map<string, { section: PivotSection; id: number; cents: number }>();
+    for (const { categoryId, amount } of t.allocations) {
+      const cents = Math.round(amount * 100);
+      const kind = categoryId === null ? null : kinds.get(categoryId);
+      let section: PivotSection;
+      let id: number;
+      if (kind === "income") [section, id] = ["income", categoryId!];
+      else if (kind === "expense") [section, id] = ["expense", categoryId!];
+      else if (kind === null || kind === undefined)
+        [section, id] = cents < 0 ? ["expense", UNCATEGORIZED_ID] : ["other", UNCATEGORIZED_IN_ID];
+      else [section, id] = ["other", categoryId!];
+      const signed = section === "expense" ? -cents : cents;
+      const key = `${section}:${id}`;
+      const part = parts.get(key);
+      if (part) part.cents += signed;
+      else parts.set(key, { section, id, cents: signed });
+    }
+    for (const { section, id, cents } of parts.values()) {
+      const byId = sections.get(section)!;
+      const category = byId.get(id) ?? { id, total: 0, entries: [] };
+      byId.set(id, category);
+      category.total += cents;
+      category.entries.push({ transaction: t, cents, partial: parts.size > 1 });
+    }
+  }
+  return [...sections.entries()].map(([section, byId]) => {
+    const list = [...byId.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    for (const c of list) c.entries.sort((a, b) => spendDate(b.transaction).localeCompare(spendDate(a.transaction)));
+    return { section, total: list.reduce((sum, c) => sum + c.total, 0), categories: list };
+  });
+}
