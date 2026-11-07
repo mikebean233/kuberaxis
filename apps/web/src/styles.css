@@ -347,3 +347,21 @@ main { max-width: 1400px; width: 100%; padding: 24px 24px 48px; }
 .hbar-value { white-space: nowrap; }
 .hbar.neutral { background: var(--viz-neutral); }
 .hbar-value { font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; }
+
+/* Period pivot on the cash flow page. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.period-stepper { display: flex; align-items: flex-end; gap: 4px; }
+.period-stepper button { padding: 4px 10px; }
+.pivot-summary { margin: -8px 0 8px; font-size: 12px; }
+.pivot tbody .pivot-section th,
+.pivot tbody .pivot-section td { font-weight: 600; text-align: left; background: color-mix(in srgb, var(--text) 4%, transparent); }
+.pivot tbody .pivot-section td.num { text-align: right; }
+.pivot tbody + tbody .pivot-section th,
+.pivot tbody + tbody .pivot-section td { border-top: 12px solid var(--surface); }
+.pivot .disclosure { display: inline-flex; align-items: center; gap: 6px; border: none; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.pivot .disclosure .chevron { display: inline-block; width: 1em; color: var(--muted); transition: transform 0.15s; }
+.pivot .disclosure[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+.pivot .pivot-entry td { font-size: 13px; background: color-mix(in srgb, var(--accent) 3%, transparent); }
+.pivot .pivot-entry td:first-child { padding-left: 32px; white-space: normal; }
+.pivot td.good { color: var(--viz-good); }
+.pivot td.bad { color: var(--viz-bad); }

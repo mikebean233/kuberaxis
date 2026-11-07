@@ -6,6 +6,10 @@ import {
   monthsEnding,
   niceTicks,
   amountsByCategory,
+  pivotByCategory,
+  spanOf,
+  spansBetween,
+  UNCATEGORIZED_IN_ID,
   rankCategories,
   spendingByCategory,
   totalsByPeriod,
@@ -107,6 +111,65 @@ describe("totals", () => {
   it("ranks categories by all-time spending or income", () => {
     expect(rankCategories(data, categories)).toEqual([4, 1]);
     expect(rankCategories(data, categories, "income")).toEqual([2]);
+  });
+});
+
+describe("pivot periods", () => {
+  it("finds the month, quarter, half and year containing a date", () => {
+    expect(spanOf("month", "2026-02-14")).toEqual({ key: "2026-02", label: "Feb 2026", start: "2026-02-01", end: "2026-02-28" });
+    expect(spanOf("quarter", "2026-08-14")).toEqual({ key: "2026-Q3", label: "Q3 2026", start: "2026-07-01", end: "2026-09-30" });
+    expect(spanOf("half", "2026-06-30")).toEqual({ key: "2026-H1", label: "Jan – Jun 2026", start: "2026-01-01", end: "2026-06-30" });
+    expect(spanOf("year", "2026-12-31")).toEqual({ key: "2026", label: "2026", start: "2026-01-01", end: "2026-12-31" });
+  });
+
+  it("lists periods covering the data, newest first", () => {
+    expect(spansBetween("quarter", "2025-11-20", "2026-04-02").map((s) => s.key)).toEqual(["2026-Q2", "2026-Q1", "2025-Q4"]);
+    expect(spansBetween("month", "2026-01-31", "2026-02-01").map((s) => s.key)).toEqual(["2026-02", "2026-01"]);
+  });
+});
+
+describe("pivot", () => {
+  const data = [
+    tx("2026-09-03", [{ categoryId: 1, amount: -50 }]),
+    tx("2026-09-04", [{ categoryId: 1, amount: 10 }]), // refund
+    tx("2026-09-05", [{ categoryId: 2, amount: 2000 }]),
+    tx("2026-09-06", [{ categoryId: 3, amount: -500 }]), // transfer
+    tx("2026-09-07", [{ categoryId: null, amount: -20 }]),
+    tx("2026-09-07", [{ categoryId: null, amount: 35 }]),
+    tx("2026-09-08", [
+      { categoryId: 1, amount: -30 },
+      { categoryId: 1, amount: -5 },
+      { categoryId: 4, amount: -15.5 },
+    ]),
+    tx("2026-10-01", [{ categoryId: 4, amount: -40 }]), // outside the span
+  ];
+  const [income, spending, other] = pivotByCategory(data, categories, { start: "2026-09-01", end: "2026-09-30" });
+
+  it("totals income and spending by category, net of refunds", () => {
+    expect(income).toMatchObject({ section: "income", total: 200000 });
+    expect(spending!.section).toBe("expense");
+    expect(spending!.categories.map((c) => [c.id, c.total])).toEqual([
+      [1, 7500],
+      [UNCATEGORIZED_ID, 2000],
+      [4, 1550],
+    ]);
+    expect(spending!.total).toBe(11050);
+  });
+
+  it("keeps transfers and uncategorized money in apart, signed like amounts", () => {
+    expect(other!.categories.map((c) => [c.id, c.total])).toEqual([
+      [3, -50000],
+      [UNCATEGORIZED_IN_ID, 3500],
+    ]);
+  });
+
+  it("lists the transactions behind a category, combining a transaction's parts", () => {
+    const groceries = spending!.categories.find((c) => c.id === 1)!;
+    expect(groceries.entries.map((e) => [e.transaction.postedDate, e.cents, e.partial])).toEqual([
+      ["2026-09-08", 3500, true],
+      ["2026-09-04", -1000, false],
+      ["2026-09-03", 5000, false],
+    ]);
   });
 });
 

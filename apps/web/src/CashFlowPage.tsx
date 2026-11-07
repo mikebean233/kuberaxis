@@ -21,6 +21,7 @@ import {
 import type { Category, TransactionRow } from "./api";
 import { ColumnChart, type ChartSeries } from "./ColumnChart";
 import { formatCents } from "./format";
+import { PeriodPivot } from "./PeriodPivot";
 
 interface Props {
   transactions: TransactionRow[];
@@ -169,6 +170,7 @@ export function CashFlowPage({ transactions, categories }: Props) {
 
       <CategoryBreakdown kind="expense" {...breakdown} />
       <CategoryBreakdown kind="income" {...breakdown} />
+      <PeriodPivot transactions={transactions} categories={categories} />
     </>
   );
 }
