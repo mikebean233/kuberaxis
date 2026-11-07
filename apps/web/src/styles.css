@@ -264,6 +264,9 @@ main { max-width: 1400px; width: 100%; padding: 24px 24px 48px; }
 .page-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .page-head p { margin: 0; }
 .filter-row { margin-bottom: 16px; }
+.section-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
+.section-head h2 { font-size: 17px; margin: 0; }
+.panel h3.chart-title { margin-top: 20px; }
 .empty-state { text-align: center; padding: 48px 16px; }
 .empty-state h2 { margin-top: 0; }
 
@@ -284,6 +287,8 @@ main { max-width: 1400px; width: 100%; padding: 24px 24px 48px; }
 .stat-value { font-size: 28px; font-weight: 600; margin: 4px 0; }
 .stat-delta { font-size: 12px; }
 .stat-delta.good { color: var(--viz-good); }
+.stat-value.good { color: var(--viz-good); }
+.stat-value.bad { color: var(--viz-bad); }
 .stat-delta.bad { color: var(--viz-bad); }
 .stat-delta .muted { color: var(--muted); }
 
