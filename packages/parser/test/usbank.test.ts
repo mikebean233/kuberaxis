@@ -262,7 +262,7 @@ describe("synthetic statements", () => {
 
   it("parses checks tables, including side-by-side columns, against the Checks Paid summary line", () => {
     const pages = page(2, [
-      [647, [20, "U.S. BANK GOLD CHECKING"], [532, "Member FDIC"]],
+      [647, [20, "U.S. BANK SMARTLY CHECKING"], [532, "Member FDIC"]],
       [624, [20, "Account Summary"]],
       [614, [20, "Beginning Balance on Dec 10"], [193, "$"], [253, "1,000.00"]],
       [603, [20, "Checks Paid"], [252, "350.00-"]],
@@ -286,6 +286,23 @@ describe("synthetic statements", () => {
     ]);
     expect(account.transactions[0]).toMatchObject({ section: "Checks Presented Conventionally", type: "Check" });
     expect(account.sectionTotals["Checks Presented Conventionally"]).toBe(-350);
+  });
+
+  it("accepts an account that prints only its balance, with detail deferred to a later statement", () => {
+    const [cover, first] = yearEndStatement("50.00");
+    const savings = page(3, [
+      [647, [14, "U.S. BANK STANDARD SAVINGS"], [532, "Member FDIC"]],
+      [636, [14, "U.S. Bank National Association"], [452, "Account Number"], [527, "5678"]],
+      [620, [14, "Balance on Jan 9"], [187, "$"], [252, "2,500.00"], [324, "* Transaction detail for this account will appear on your Feb"]],
+      [610, [324, "statement."]],
+    ]);
+
+    const statement = parsePages([cover!, first!, savings]);
+    const account = statement.accounts[1]!;
+    expect(account).toMatchObject({ name: "U.S. BANK STANDARD SAVINGS", accountNumber: "5678", transactions: [] });
+    expect(account.summary).toMatchObject({ beginningBalance: null, endingBalance: 2500 });
+    expect(account.validation).toEqual({ ok: true, issues: [] });
+    expect(statement.accounts[0]!.validation.issues).toEqual([]);
   });
 
   it("rejects documents that are not U.S. Bank statements", () => {
