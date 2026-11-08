@@ -33,6 +33,11 @@ const TOTAL_RE = /^(Total .+?|.+ Subtotal)\s+(?:\$\s+)?(\d{1,3}(?:,\d{3})*\.\d{2
 const CHECKS_TOTAL_RE = /^.*Checks Paid \(\d+\)\s+(?:\$\s+)?(\d{1,3}(?:,\d{3})*\.\d{2}-?)$/;
 /** Account Summary labels whose transactions are split across several sections. */
 const SUMMARY_SECTION_PREFIXES: Record<string, string> = { "Checks Paid": "Checks Presented" };
+/**
+ * e.g. "Balance on Jan 9 $ 2,500.00 * Transaction detail for this account will appear on your ... statement."
+ * Accounts on a quarterly cycle print only this line in off months, with no Account Summary.
+ */
+const BALANCE_ONLY_RE = /^Balance on ([A-Z][a-z]{2} \d{1,2})\s+(?:\$\s+)?(\d{1,3}(?:,\d{3})*\.\d{2}-?)\b/;
 const BALANCE_ENTRY_RE = /([A-Z][a-z]{2}) (\d{1,2}) (\d{1,3}(?:,\d{3})*\.\d{2}-?)/g;
 /** Headings sit at the left margin (x ~= 20); anything past this is not a heading. */
 const LEFT_MARGIN_MAX_X = 40;
@@ -130,6 +135,8 @@ interface AccountState {
   account: UsBankAccount;
   /** Card subtotal lines, keyed by last four digits. */
   cardSubtotals: Map<string, number>;
+  /** The account printed only a "Balance on ..." line; its detail is deferred to a later statement. */
+  balanceOnly: boolean;
 }
 
 class AccountParser {
@@ -216,6 +223,15 @@ class AccountParser {
       return;
     }
 
+    const balanceOnly = this.mode === "none" && first.x < LEFT_MARGIN_MAX_X ? BALANCE_ONLY_RE.exec(text) : null;
+    if (balanceOnly?.[1] && balanceOnly[2]) {
+      const value = parseAmount(balanceOnly[2]);
+      state.account.summary.endingBalance ??= value;
+      state.account.summary.lines.push({ label: `Balance on ${balanceOnly[1]}`, value });
+      state.balanceOnly = true;
+      return;
+    }
+
     const cardMatch = /^Card Number: .*?(\d{4})$/.exec(text);
     if (cardMatch?.[1]) {
       this.cardLast4 = cardMatch[1];
@@ -271,6 +287,7 @@ class AccountParser {
         validation: { ok: true, issues: [] },
       },
       cardSubtotals: new Map(),
+      balanceOnly: false,
     };
     this.accounts.push(this.current);
     this.setMode("none");
@@ -464,9 +481,11 @@ class AccountParser {
 // Validation
 // ---------------------------------------------------------------------------
 
-function validate({ account, cardSubtotals }: AccountState): ValidationResult {
+function validate({ account, cardSubtotals, balanceOnly }: AccountState): ValidationResult {
   const issues: string[] = [];
   const { summary, transactions, sectionTotals } = account;
+  // Nothing to reconcile: the statement only reports the balance and lists no transactions.
+  if (balanceOnly && summary.beginningBalance === null && transactions.length === 0) return { ok: true, issues };
   const cents = (n: number) => Math.round(n * 100);
   const sumCents = (txns: Transaction[]) => txns.reduce((acc, t) => acc + cents(t.amount), 0);
   const fmt = (c: number) => (c / 100).toFixed(2);
@@ -498,7 +517,7 @@ function validate({ account, cardSubtotals }: AccountState): ValidationResult {
     if (actual !== cents(subtotal)) issues.push(`Card ${card} transactions sum to ${fmt(actual)}, but the subtotal is ${subtotal.toFixed(2)}`);
   }
 
-  const balanceLabels = /^(Beginning Balance|Ending Balance)\b/;
+  const balanceLabels = /^(Beginning Balance|Ending Balance|Balance on)\b/;
   for (const { label, value } of summary.lines) {
     if (balanceLabels.test(label)) continue;
     const prefix = SUMMARY_SECTION_PREFIXES[label];
