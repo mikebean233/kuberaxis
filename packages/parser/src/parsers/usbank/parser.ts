@@ -29,6 +29,10 @@ const AMOUNT_RE = /^\d{1,3}(?:,\d{3})*\.\d{2}-?$/;
 const FULL_DATE_RE = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/;
 const SHORT_DATE_RE = /^([A-Z][a-z]{2}) (\d{1,2})$/;
 const TOTAL_RE = /^(Total .+?|.+ Subtotal)\s+(?:\$\s+)?(\d{1,3}(?:,\d{3})*\.\d{2}-?)$/;
+/** e.g. "Conventional Checks Paid (3) $ 350.00-", the total line of a "Checks Presented ..." table. */
+const CHECKS_TOTAL_RE = /^.*Checks Paid \(\d+\)\s+(?:\$\s+)?(\d{1,3}(?:,\d{3})*\.\d{2}-?)$/;
+/** Account Summary labels whose transactions are split across several sections. */
+const SUMMARY_SECTION_PREFIXES: Record<string, string> = { "Checks Paid": "Checks Presented" };
 const BALANCE_ENTRY_RE = /([A-Z][a-z]{2}) (\d{1,2}) (\d{1,3}(?:,\d{3})*\.\d{2}-?)/g;
 /** Headings sit at the left margin (x ~= 20); anything past this is not a heading. */
 const LEFT_MARGIN_MAX_X = 40;
@@ -113,7 +117,14 @@ interface TableColumns {
   refX: number;
 }
 
-type Mode = "none" | "summary" | "table" | "balances";
+type Mode = "none" | "summary" | "table" | "checks" | "balances";
+
+/** One "Check | Date | Ref Number | Amount" group; checks tables print several side by side. */
+interface CheckColumns {
+  checkX: number;
+  dateX: number;
+  refX: number;
+}
 
 interface AccountState {
   account: UsBankAccount;
@@ -126,6 +137,7 @@ class AccountParser {
   private current: AccountState | null = null;
   private mode: Mode = "none";
   private columns: TableColumns | null = null;
+  private checkColumns: CheckColumns[] = [];
   private lastHeading = "";
   private section = "";
   private cardLast4: string | null = null;
@@ -139,7 +151,7 @@ class AccountParser {
       // Transactions never continue across a page break, and each continuation page
       // repeats the statement header before re-printing the table header.
       this.openTransaction = null;
-      if (this.mode === "table") this.awaitingTableHeader = true;
+      if (this.mode === "table" || this.mode === "checks") this.awaitingTableHeader = true;
       for (const line of page.lines) this.handleLine(line);
     }
     return this.accounts.map((state) => {
@@ -194,6 +206,11 @@ class AccountParser {
       return;
     }
 
+    if (first.str === "Check" && items.some((i) => i.str === "Ref Number")) {
+      this.startChecksTable(items);
+      return;
+    }
+
     if (first.str === "Date" && items.some((i) => i.str === "Ending Balance")) {
       this.setMode("balances");
       return;
@@ -206,6 +223,12 @@ class AccountParser {
     }
 
     if (first.x > LEFT_MARGIN_MAX_X) {
+      const checksTotal = this.mode === "checks" ? CHECKS_TOTAL_RE.exec(text) : null;
+      if (checksTotal?.[1]) {
+        state.account.sectionTotals[this.section] = parseAmount(checksTotal[1]);
+        this.setMode("none");
+        return;
+      }
       const totalMatch = TOTAL_RE.exec(text);
       if (totalMatch?.[1] && totalMatch[2]) {
         this.recordTotal(state, totalMatch[1], parseAmount(totalMatch[2]));
@@ -223,6 +246,10 @@ class AccountParser {
         // names the section, and a stray line on the previous page may have been taken as one.
         if (this.awaitingTableHeader) break;
         if (this.handleTableLine(state, line)) return;
+        break;
+      case "checks":
+        if (this.awaitingTableHeader) break;
+        if (this.handleChecksLine(state, line)) return;
         break;
       case "balances":
         if (this.handleBalanceLine(state.account.dailyBalances, text)) return;
@@ -266,6 +293,62 @@ class AccountParser {
     this.section = this.lastHeading.replace(/\s*\(continued\)$/i, "");
     this.columns = { descriptionX: description.x, refX: ref?.x ?? amount.x };
     this.setMode("table");
+  }
+
+  private startChecksTable(items: TextItem[]): void {
+    const columns: CheckColumns[] = [];
+    for (const [index, item] of items.entries()) {
+      if (item.str !== "Check") continue;
+      const rest = items.slice(index + 1);
+      const date = rest.find((i) => i.str === "Date");
+      const ref = rest.find((i) => i.str === "Ref Number");
+      if (!date || !ref) throw new UsBankParseError("Unrecognized checks table header");
+      columns.push({ checkX: item.x, dateX: date.x, refX: ref.x });
+    }
+    this.section = this.lastHeading.replace(/\s*\(continued\)$/i, "");
+    this.checkColumns = columns;
+    this.setMode("checks");
+  }
+
+  /** Returns false when the line is not a row of checks. Each row holds up to one check per column group. */
+  private handleChecksLine(state: AccountState, line: TextLine): boolean {
+    const groups = this.checkColumns.map((column, index) => {
+      const next = this.checkColumns[index + 1];
+      const items = line.items.filter((i) => i.x >= column.checkX - 2 && (!next || i.x < next.checkX - 2));
+      return { column, items };
+    });
+
+    const checks: Transaction[] = [];
+    for (const { column, items } of groups) {
+      if (items.length === 0) continue;
+      const numberItems = items.filter((i) => i.x < column.dateX - 2);
+      const dateText = items
+        .filter((i) => i.x >= column.dateX - 2 && i.x < column.refX - 2)
+        .map((i) => i.str)
+        .join(" ");
+      const amountItem = [...items].reverse().find((i) => i.x >= column.refX - 2 && AMOUNT_RE.test(i.str));
+      if (!SHORT_DATE_RE.test(dateText) || !amountItem) return false;
+      const refItems = items.filter((i) => i.x >= column.refX - 2 && i !== amountItem && i.str !== "$");
+      // "*" marks a gap in the check sequence.
+      const checkNumber = numberItems.map((i) => i.str).join(" ").replace(/\*$/, "").trim();
+
+      checks.push({
+        date: this.resolveShortDate(dateText),
+        section: this.section,
+        type: "Check",
+        description: checkNumber ? `Check ${checkNumber}` : "Check",
+        details: [],
+        refNumber: refItems.length ? refItems.map((i) => i.str).join(" ") : null,
+        // Check amounts are printed unsigned, but they are always withdrawals.
+        amount: -Math.abs(parseAmount(amountItem.str)),
+        transactionDate: null,
+        cardLast4: null,
+        page: line.page,
+      });
+    }
+    if (checks.length === 0) return false;
+    state.account.transactions.push(...checks);
+    return true;
   }
 
   private recordTotal(state: AccountState, label: string, value: number): void {
@@ -418,8 +501,11 @@ function validate({ account, cardSubtotals }: AccountState): ValidationResult {
   const balanceLabels = /^(Beginning Balance|Ending Balance)\b/;
   for (const { label, value } of summary.lines) {
     if (balanceLabels.test(label)) continue;
-    const txns = sections.get(label);
-    if (!txns) {
+    const prefix = SUMMARY_SECTION_PREFIXES[label];
+    const txns = prefix
+      ? [...sections].filter(([section]) => section.startsWith(prefix)).flatMap(([, t]) => t)
+      : sections.get(label);
+    if (!txns || (prefix && txns.length === 0)) {
       if (value !== 0) issues.push(`Account Summary line "${label}" (${value.toFixed(2)}) has no matching transaction section`);
       continue;
     }
