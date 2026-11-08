@@ -260,6 +260,34 @@ describe("synthetic statements", () => {
     expect(statement.accounts[0]!.transactions).toHaveLength(2);
   });
 
+  it("parses checks tables, including side-by-side columns, against the Checks Paid summary line", () => {
+    const pages = page(2, [
+      [647, [20, "U.S. BANK GOLD CHECKING"], [532, "Member FDIC"]],
+      [624, [20, "Account Summary"]],
+      [614, [20, "Beginning Balance on Dec 10"], [193, "$"], [253, "1,000.00"]],
+      [603, [20, "Checks Paid"], [252, "350.00-"]],
+      [565, [52, "Ending Balance on Jan 9, 2026"], [193, "$"], [253, "650.00"]],
+      [471, [14, "Checks Presented Conventionally"]],
+      [460, [14, "Check"], [79, "Date"], [130, "Ref Number"], [257, "Amount"], [300, "Check"], [365, "Date"], [416, "Ref Number"], [543, "Amount"]],
+      [450, [14, "1001"], [79, "Dec"], [98, "31"], [130, "1000000001"], [253, "100.00"], [300, "1003*"], [365, "Jan 2"], [416, "1000000003"], [539, "200.00"]],
+      [440, [14, "1002"], [79, "Jan"], [98, "2"], [130, "1000000002"], [258, "50.00"]],
+      [420, [320, "Conventional Checks Paid (3)"], [490, "$"], [545, "350.00-"]],
+      [340, [14, "Balance Summary"]],
+      [330, [14, "Date"], [110, "Ending Balance"], [202, "Date"], [297, "Ending Balance"]],
+      [320, [14, "Dec 31"], [134, "900.00"], [202, "Jan"], [220, "2"], [321, "650.00"]],
+    ]);
+
+    const account = parsePages([coverPage("Dec 10, 2025", "Jan 9, 2026"), pages]).accounts[0]!;
+    expect(account.validation.issues).toEqual([]);
+    expect(account.transactions.map((t) => [t.date, t.description, t.refNumber, t.amount])).toEqual([
+      ["2025-12-31", "Check 1001", "1000000001", -100],
+      ["2026-01-02", "Check 1003", "1000000003", -200],
+      ["2026-01-02", "Check 1002", "1000000002", -50],
+    ]);
+    expect(account.transactions[0]).toMatchObject({ section: "Checks Presented Conventionally", type: "Check" });
+    expect(account.sectionTotals["Checks Presented Conventionally"]).toBe(-350);
+  });
+
   it("rejects documents that are not U.S. Bank statements", () => {
     expect(() => parsePages([coverPage("Dec 10, 2025", "Jan 9, 2026")])).toThrow(UsBankParseError);
   });
