@@ -17,6 +17,7 @@ import { ItemizeDialog } from "./ItemizeDialog";
 import { PurgeButton } from "./PurgeButton";
 import { RulesPanel } from "./RulesPanel";
 import { CashFlowPage } from "./CashFlowPage";
+import { ThemePicker } from "./ThemePicker";
 import { TransactionsTable } from "./TransactionsTable";
 
 const TABS = [
@@ -136,6 +137,7 @@ export function App() {
             </li>
           ))}
         </ul>
+        <ThemePicker />
         <div className="sidebar-foot">
           <PurgeButton
             onPurged={() => {
@@ -169,7 +171,7 @@ export function App() {
         ) : (
           <>
             {tab === "home" && <HomePage transactions={transactions} categories={categories} onNavigate={setTab} />}
-            {tab === "cashflow" && <CashFlowPage transactions={transactions} categories={categories} />}
+            {tab === "cashflow" && <CashFlowPage transactions={transactions} categories={categories} accounts={accounts} />}
             {tab === "transactions" && (
               <>
                 <header className="page-head">
