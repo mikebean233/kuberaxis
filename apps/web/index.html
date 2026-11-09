@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kuberaxis</title>
+    <script>
+      // Apply a saved light/dark choice before first paint; otherwise the OS setting applies. See ThemePicker.tsx.
+      try {
+        const theme = localStorage.getItem("kuberaxis.theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

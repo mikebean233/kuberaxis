@@ -1,12 +1,14 @@
 import { Fragment, useState } from "react";
 import {
-  earliestDate,
-  latestDate,
+  type DataRange,
+  type DateSpan,
   type PeriodSize,
+  perDay,
+  type PivotEntry,
   type PivotSection,
   pivotByCategory,
-  spanOf,
-  spansBetween,
+  RATE_UNITS,
+  rateUnitApplies,
   spendDate,
   UNCATEGORIZED_ID,
   UNCATEGORIZED_IN_ID,
@@ -17,15 +19,13 @@ import { formatCents, formatDate } from "./format";
 interface Props {
   transactions: TransactionRow[];
   categories: Category[];
+  /** The page's period; the pivot covers exactly these dates. */
+  span: DateSpan;
+  /** The calendar size the period matches, if any; per-unit columns only show units shorter than it. */
+  size: PeriodSize | null;
+  /** Each account's first and last transaction dates, which per-unit averages are prorated to. */
+  dataRanges: Map<number, DataRange>;
 }
-
-const SIZES: { id: PeriodSize | "custom"; label: string }[] = [
-  { id: "month", label: "Month" },
-  { id: "quarter", label: "Quarter" },
-  { id: "half", label: "Half year" },
-  { id: "year", label: "Year" },
-  { id: "custom", label: "Custom dates" },
-];
 
 const SECTIONS: Record<PivotSection, { title: string; note?: string }> = {
   income: { title: "Income" },
@@ -33,36 +33,33 @@ const SECTIONS: Record<PivotSection, { title: string; note?: string }> = {
   other: { title: "Not counted", note: "Transfers and uncategorized money in, signed like amounts" },
 };
 
-/** A pivot of one period by category; each category opens up to the transactions behind it. */
-export function PeriodPivot({ transactions, categories }: Props) {
-  const first = earliestDate(transactions)!;
-  const last = latestDate(transactions)!;
-
-  const [size, setSize] = useState<PeriodSize | "custom">("month");
-  const [key, setKey] = useState<string | null>(null);
-  const [custom, setCustom] = useState(() => spanOf("month", last));
+/** The page's period by category; each category opens up to the transactions behind it. */
+export function PeriodPivot({ transactions, categories, span, size, dataRanges }: Props) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-
-  const spans = size === "custom" ? [] : spansBetween(size, first, last);
-  const index = Math.max(
-    spans.findIndex((s) => s.key === key),
-    0,
-  );
-  const span = size === "custom" ? custom : spans[index]!;
-
-  const changeSize = (next: PeriodSize | "custom") => {
-    // Keep roughly the same place in time: the new period containing the end of the current one.
-    const anchor = span.end > last ? last : span.end;
-    if (next === "custom") setCustom(span);
-    else setKey(spanOf(next, anchor < first ? first : anchor).key);
-    setSize(next);
-  };
 
   const groups = pivotByCategory(transactions, categories, span);
   const income = groups.find((g) => g.section === "income")!.total;
   const spending = groups.find((g) => g.section === "expense")!.total;
   const net = income - spending;
   const isEmpty = groups.every((g) => g.categories.length === 0);
+
+  // Per-unit averages: each account prorated over the part of the period it has data for. Units as long as the
+  // period or longer show "–".
+  const units = RATE_UNITS.map((u) => ({ ...u, applies: rateUnitApplies(u.id, size, span) }));
+  const rateOf = (entries: PivotEntry[]) =>
+    perDay(
+      entries.map((e) => ({ accountId: e.transaction.accountId, cents: e.cents })),
+      span,
+      dataRanges,
+    );
+  const entriesOf = (section: PivotSection) => groups.find((g) => g.section === section)!.categories.flatMap((c) => c.entries);
+  const rateCells = (rate: number | null, className = "") =>
+    units.map((u) => (
+      <td key={u.id} className={`num ${className}`}>
+        {rate === null ? "" : u.applies ? formatCents(Math.round(rate * u.days)) : "–"}
+      </td>
+    ));
+  const netRate = rateOf(entriesOf("income")) - rateOf(entriesOf("expense"));
 
   const names = new Map(categories.map((c) => [c.id, c.name]));
   const nameOf = (id: number) =>
@@ -80,70 +77,11 @@ export function PeriodPivot({ transactions, categories }: Props) {
   return (
     <section className="panel">
       <div className="section-head">
-        <h2>Breakdown by period</h2>
-        <div className="filters">
-          <label>
-            Period
-            <select value={size} onChange={(e) => changeSize(e.target.value as typeof size)}>
-              {SIZES.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {size === "custom" ? (
-            <>
-              <label>
-                From
-                <input
-                  type="date"
-                  value={custom.start}
-                  max={custom.end}
-                  onChange={(e) => e.target.value && setCustom({ ...custom, start: e.target.value })}
-                />
-              </label>
-              <label>
-                To
-                <input
-                  type="date"
-                  value={custom.end}
-                  min={custom.start}
-                  onChange={(e) => e.target.value && setCustom({ ...custom, end: e.target.value })}
-                />
-              </label>
-            </>
-          ) : (
-            <div className="period-stepper">
-              <button
-                type="button"
-                aria-label="Previous period"
-                disabled={index >= spans.length - 1}
-                onClick={() => setKey(spans[index + 1]!.key)}
-              >
-                ‹
-              </button>
-              <label>
-                <span className="visually-hidden">Which {size}</span>
-                <select value={span.key} onChange={(e) => setKey(e.target.value)}>
-                  {spans.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button type="button" aria-label="Next period" disabled={index === 0} onClick={() => setKey(spans[index - 1]!.key)}>
-                ›
-              </button>
-            </div>
-          )}
-        </div>
+        <h2>Transactions by category</h2>
       </div>
 
       <p className="muted pivot-summary">
         {formatDate(span.start)} – {formatDate(span.end)}
-        {span.end > last && span.start <= last && ` · data through ${formatDate(last)}`}
         {!isEmpty && (
           <>
             {" · "}
@@ -166,6 +104,11 @@ export function PeriodPivot({ transactions, categories }: Props) {
                 <th>Date</th>
                 <th className="num">Amount</th>
                 <th className="num">Share</th>
+                {units.map((u) => (
+                  <th key={u.id} className="num">
+                    {u.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             {groups
@@ -179,6 +122,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
                     </th>
                     <td className="num">{formatCents(g.total)}</td>
                     <td />
+                    {rateCells(rateOf(entriesOf(g.section)))}
                   </tr>
                   {g.categories.map((c) => {
                     const k = rowKey(g.section, c.id);
@@ -201,6 +145,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
                           <td className="num">
                             {g.section !== "other" && g.total > 0 ? `${((c.total / g.total) * 100).toFixed(1)}%` : ""}
                           </td>
+                          {rateCells(rateOf(c.entries))}
                         </tr>
                         {expanded &&
                           c.entries.map((e) => (
@@ -220,6 +165,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
                               <td>{formatDate(spendDate(e.transaction))}</td>
                               <td className="num">{formatCents(e.cents)}</td>
                               <td />
+                              {rateCells(null)}
                             </tr>
                           ))}
                       </Fragment>
@@ -235,6 +181,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
                   {formatCents(net)}
                 </td>
                 <td />
+                {rateCells(netRate, netRate > 0 ? "good" : netRate < 0 ? "bad" : "")}
               </tr>
             </tfoot>
           </table>

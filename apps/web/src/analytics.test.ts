@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  coveredDays,
+  perDay,
+  RATE_UNITS,
+  rateUnitApplies,
   formatDollarsShort,
   latestMonth,
   monthRangeLabel,
@@ -183,5 +187,55 @@ describe("axis helpers", () => {
   it("formats dollars compactly from $10,000", () => {
     expect(formatDollarsShort(8_412_37)).toBe("$8,412");
     expect(formatDollarsShort(12_900_00)).toBe("$12.9K");
+  });
+});
+
+describe("per-unit averages", () => {
+  const year = spanOf("year", "2025-01-01");
+  const month = (id: string) => RATE_UNITS.find((u) => u.id === id)!.days;
+
+  it("prorates over the days an account has data for", () => {
+    const range = (firstDate: string | null, lastDate: string | null) => ({ firstDate, lastDate });
+    expect(coveredDays(year, range("2024-06-01", "2025-12-31"))).toBe(365);
+    expect(coveredDays(year, range("2024-06-01", "2026-02-01"))).toBe(365);
+    expect(coveredDays(year, range("2024-06-01", "2025-09-30"))).toBe(273);
+    expect(coveredDays(year, range("2025-04-01", "2025-09-30"))).toBe(183);
+    expect(coveredDays(year, range("2024-06-01", "2024-12-31"))).toBe(0);
+    expect(coveredDays(year, range("2026-01-01", "2026-02-01"))).toBe(0);
+    expect(coveredDays(year, range(null, null))).toBe(0);
+
+    // $750 over 273 of the year's 365 days: annualized, then a twelfth of that.
+    const rate = perDay([{ accountId: 1, cents: 75_000 }], year, new Map([[1, range("2024-06-01", "2025-09-30")]]));
+    expect(rate * month("month")).toBeCloseTo(75_000 / (273 / 365) / 12);
+    expect(rate * month("year")).toBeCloseTo(75_000 / (273 / 365));
+  });
+
+  it("prorates each account over its own days, from its first transaction to its last", () => {
+    const ranges = new Map([
+      [1, { firstDate: "2024-01-01", lastDate: "2025-12-31" }],
+      [2, { firstDate: "2025-04-01", lastDate: "2025-06-30" }],
+    ]);
+    const rate = perDay(
+      [
+        { accountId: 1, cents: 36_500 },
+        { accountId: 2, cents: 9_100 },
+      ],
+      year,
+      ranges,
+    );
+    expect(rate).toBeCloseTo(100 + 100);
+  });
+
+  it("shows only units shorter than the period", () => {
+    const applies = (size: Parameters<typeof rateUnitApplies>[1], span = year) =>
+      RATE_UNITS.filter((u) => rateUnitApplies(u.id, size, span)).map((u) => u.id);
+    expect(applies("month")).toEqual(["day"]);
+    expect(applies("quarter")).toEqual(["day", "month"]);
+    expect(applies("half")).toEqual(["day", "month", "quarter"]);
+    expect(applies("year")).toEqual(["day", "month", "quarter", "half"]);
+    // Custom dates: by length.
+    expect(applies(null, { key: "c", label: "", start: "2025-01-01", end: "2025-01-31" })).toEqual(["day"]);
+    expect(applies(null, { key: "c", label: "", start: "2025-01-01", end: "2025-03-15" })).toEqual(["day", "month"]);
+    expect(applies(null, { key: "c", label: "", start: "2023-01-01", end: "2025-06-30" })).toEqual(RATE_UNITS.map((u) => u.id));
   });
 });

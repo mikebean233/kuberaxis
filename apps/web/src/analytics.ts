@@ -332,3 +332,59 @@ export function pivotByCategory(
     return { section, total: list.reduce((sum, c) => sum + c.total, 0), categories: list };
   });
 }
+
+/** Time units a period's amounts are averaged over, as days (a year is 365 days). */
+export const RATE_UNITS = [
+  { id: "day", label: "Per day", days: 1 },
+  { id: "month", label: "Per month", days: 365 / 12 },
+  { id: "quarter", label: "Per quarter", days: 365 / 4 },
+  { id: "half", label: "Per half", days: 365 / 2 },
+  { id: "year", label: "Per year", days: 365 },
+] as const;
+
+const daysBetween = (start: string, end: string) =>
+  (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000;
+
+/** The first and last transaction dates of an account's data (null when it has none). */
+export interface DataRange {
+  firstDate: string | null;
+  lastDate: string | null;
+}
+
+/**
+ * Days of the span an account has data for: from its first transaction date (or the span's start, if later) through
+ * its last (or the span's end, if sooner), both inclusive. 0 when its data doesn't overlap the span.
+ */
+export function coveredDays(span: { start: string; end: string }, { firstDate, lastDate }: DataRange): number {
+  if (firstDate === null || lastDate === null) return 0;
+  const start = firstDate > span.start ? firstDate : span.start;
+  const end = lastDate < span.end ? lastDate : span.end;
+  return end < start ? 0 : daysBetween(start, end) + 1;
+}
+
+/**
+ * Cents per day across accounts, each prorated over the days it has data for, so an account whose data starts late
+ * or stops early isn't averaged over days it has no data for. Multiply by a unit's `days` for that unit.
+ */
+export function perDay(
+  parts: { accountId: number; cents: number }[],
+  span: { start: string; end: string },
+  ranges: Map<number, DataRange>,
+): number {
+  let rate = 0;
+  for (const { accountId, cents } of parts) {
+    const range = ranges.get(accountId) ?? { firstDate: null, lastDate: null };
+    rate += cents / Math.max(coveredDays(span, range), 1);
+  }
+  return rate;
+}
+
+/**
+ * Whether a unit is shorter than the period, so a per-unit average means something: a calendar period (or rolling
+ * one of the same length) shows only the smaller units; other spans show units at least 10% shorter than them.
+ */
+export function rateUnitApplies(unit: (typeof RATE_UNITS)[number]["id"], size: PeriodSize | null, span: DateSpan): boolean {
+  const index = RATE_UNITS.findIndex((u) => u.id === unit);
+  if (size !== null) return index < RATE_UNITS.findIndex((u) => u.id === size);
+  return RATE_UNITS[index]!.days * 1.1 < daysBetween(span.start, span.end) + 1;
+}

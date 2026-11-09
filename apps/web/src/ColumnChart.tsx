@@ -9,13 +9,15 @@ export interface ChartSeries {
   color: string;
   /** Cents per period, in the same order as `periods`. */
   values: number[];
+  /** With `stacked`, series sharing a stack name stack into one column; each stack gets its own column, side by side. */
+  stack?: string;
 }
 
 interface Props {
   title: string;
   periods: { key: string; label: string; longLabel?: string }[];
   series: ChartSeries[];
-  /** Stack the series into one column per period instead of grouping them side by side. */
+  /** Stack the series into one column per period (one per `stack`, if they're named) instead of side by side. */
   stacked?: boolean;
   /** Print values on column caps (each bar when grouped, the total when stacked). Off for dense charts. */
   capLabels?: boolean;
@@ -47,14 +49,16 @@ export function ColumnChart({ title, periods, series, stacked = false, capLabels
   const plotHeight = height - MARGIN.top - MARGIN.bottom;
   // Negative net values (refunds exceeding spending) draw as nothing; the tooltip and table show them.
   const clamp = (v: number) => Math.max(v, 0);
-  const totals = periods.map((_, i) => series.reduce((sum, s) => sum + clamp(s.values[i] ?? 0), 0));
-  const max = stacked ? Math.max(0, ...totals) : Math.max(0, ...series.flatMap((s) => s.values.map(clamp)));
+  const stacks = stacked ? stacksOf(series) : [];
+  // Per stack, per period: what the column's height adds up to.
+  const stackTotals = stacks.map((st) => periods.map((_, i) => st.series.reduce((sum, s) => sum + clamp(s.values[i] ?? 0), 0)));
+  const max = stacked ? Math.max(0, ...stackTotals.flat()) : Math.max(0, ...series.flatMap((s) => s.values.map(clamp)));
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1] || 1;
   const y = (v: number) => plotHeight - (clamp(v) / top) * plotHeight;
 
   const band = periods.length ? plotWidth / periods.length : 0;
-  const groupCount = stacked ? 1 : series.length;
+  const groupCount = stacked ? stacks.length : series.length;
   const barWidth = Math.max(Math.min(MAX_BAR, (band * 0.7 - GAP * (groupCount - 1)) / groupCount), 2);
   const groupWidth = barWidth * groupCount + GAP * (groupCount - 1);
   // Skip x labels when they'd collide.
@@ -68,15 +72,14 @@ export function ColumnChart({ title, periods, series, stacked = false, capLabels
         <span id={`${id}-title`} className="chart-title">
           {title}
         </span>
-        {series.length > 1 && (
-          <ul className="chart-legend">
-            {series.map((s) => (
-              <li key={s.id}>
-                <span className="swatch" style={{ background: s.color }} aria-hidden="true" />
-                {s.name}
-              </li>
+        {stacks.length > 1 ? (
+          <div className="chart-legends">
+            {stacks.map((st) => (
+              <Legend key={st.name} label={st.name} series={st.series} />
             ))}
-          </ul>
+          </div>
+        ) : (
+          series.length > 1 && <Legend series={series} />
         )}
       </figcaption>
 
@@ -95,32 +98,45 @@ export function ColumnChart({ title, periods, series, stacked = false, capLabels
 
               {periods.map((p, i) => {
                 const x0 = band * i + (band - groupWidth) / 2;
-                let stackTop = plotHeight;
-                const visible = series.filter((s) => clamp(s.values[i] ?? 0) > 0);
                 return (
                   <g key={p.key} className={active !== null && active !== i ? "chart-dim" : undefined}>
                     {active === i && <rect x={band * i} width={band} height={plotHeight} className="chart-hover-band" />}
-                    {series.map((s, j) => {
-                      const value = clamp(s.values[i] ?? 0);
-                      if (value <= 0) return null;
-                      if (!stacked) {
-                        const x = x0 + j * (barWidth + GAP);
-                        return <path key={s.id} d={column(x, y(value), barWidth, plotHeight - y(value), true)} fill={s.color} />;
-                      }
-                      const h = (value / top) * plotHeight;
-                      const isTop = visible[visible.length - 1] === s;
-                      // A surface-colored gap separates stacked segments.
-                      const drawn = Math.max(h - (stackTop < plotHeight ? GAP : 0), 0.5);
-                      stackTop -= h;
-                      return <path key={s.id} d={column(x0, stackTop + (h - drawn), barWidth, drawn, isTop)} fill={s.color} />;
-                    })}
+                    {stacked
+                      ? stacks.map((st, k) => {
+                          const x = x0 + k * (barWidth + GAP);
+                          const visible = st.series.filter((s) => clamp(s.values[i] ?? 0) > 0);
+                          let stackTop = plotHeight;
+                          return visible.map((s) => {
+                            const h = (clamp(s.values[i] ?? 0) / top) * plotHeight;
+                            const isTop = visible[visible.length - 1] === s;
+                            // A surface-colored gap separates stacked segments.
+                            const drawn = Math.max(h - (stackTop < plotHeight ? GAP : 0), 0.5);
+                            stackTop -= h;
+                            return <path key={s.id} d={column(x, stackTop + (h - drawn), barWidth, drawn, isTop)} fill={s.color} />;
+                          });
+                        })
+                      : series.map((s, j) => {
+                          const value = clamp(s.values[i] ?? 0);
+                          if (value <= 0) return null;
+                          const x = x0 + j * (barWidth + GAP);
+                          return <path key={s.id} d={column(x, y(value), barWidth, plotHeight - y(value), true)} fill={s.color} />;
+                        })}
                     {capLabels &&
                       (stacked
-                        ? totals[i]! > 0 && (
-                            <text x={x0 + barWidth / 2} y={y(totals[i]!) - 6} textAnchor="middle" className="chart-cap">
-                              {formatDollarsShort(totals[i]!)}
-                            </text>
-                          )
+                        ? stacks.map((st, k) => {
+                            const total = stackTotals[k]![i]!;
+                            return total > 0 ? (
+                              <text
+                                key={st.name}
+                                x={x0 + k * (barWidth + GAP) + barWidth / 2}
+                                y={y(total) - 6}
+                                textAnchor="middle"
+                                className="chart-cap"
+                              >
+                                {formatDollarsShort(total)}
+                              </text>
+                            ) : null;
+                          })
                         : series.map((s, j) => {
                             const value = s.values[i] ?? 0;
                             // Values that would print as "$0" get no cap label; the tooltip and table still have them.
@@ -167,20 +183,25 @@ export function ColumnChart({ title, periods, series, stacked = false, capLabels
             style={{ left: tooltipLeft, transform: `translateX(${tooltipLeft > width / 2 ? "calc(-100% - 12px)" : "12px"})` }}
           >
             <div className="chart-tooltip-title">{periods[active]!.longLabel ?? periods[active]!.label}</div>
-            {[...series].reverse().map((s) => (
-              <div key={s.id} className="chart-tooltip-row">
-                <span className="line-key" style={{ background: s.color }} aria-hidden="true" />
-                <strong>{formatCents(s.values[active] ?? 0)}</strong>
-                <span>{s.name}</span>
+            {(stacked ? stacks : [{ name: "", series }]).map((st) => (
+              <div key={st.name} className="chart-tooltip-group">
+                {/* Top of the stack first, as drawn. */}
+                {[...st.series].reverse().map((s) => (
+                  <div key={s.id} className="chart-tooltip-row">
+                    <span className="line-key" style={{ background: s.color }} aria-hidden="true" />
+                    <strong>{formatCents(s.values[active] ?? 0)}</strong>
+                    <span>{s.name}</span>
+                  </div>
+                ))}
+                {stacked && (st.series.length > 1 || stacks.length > 1) && (
+                  <div className="chart-tooltip-row total">
+                    <span className="line-key" aria-hidden="true" />
+                    <strong>{formatCents(st.series.reduce((sum, s) => sum + (s.values[active] ?? 0), 0))}</strong>
+                    <span>{st.name ? `${st.name} total` : "Total"}</span>
+                  </div>
+                )}
               </div>
             ))}
-            {stacked && series.length > 1 && (
-              <div className="chart-tooltip-row total">
-                <span className="line-key" aria-hidden="true" />
-                <strong>{formatCents(series.reduce((sum, s) => sum + (s.values[active] ?? 0), 0))}</strong>
-                <span>Total</span>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -193,33 +214,63 @@ export function ColumnChart({ title, periods, series, stacked = false, capLabels
   );
 }
 
+function Legend({ label, series }: { label?: string; series: ChartSeries[] }) {
+  return (
+    <ul className="chart-legend">
+      {label && <li className="chart-legend-label">{label}</li>}
+      {series.map((s) => (
+        <li key={s.id}>
+          <span className="swatch" style={{ background: s.color }} aria-hidden="true" />
+          {s.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Series grouped by stack name, in first-seen order; unnamed series share one stack. */
+function stacksOf(series: ChartSeries[]): { name: string; series: ChartSeries[] }[] {
+  const stacks = new Map<string, ChartSeries[]>();
+  for (const s of series) stacks.set(s.stack ?? "", [...(stacks.get(s.stack ?? "") ?? []), s]);
+  return [...stacks].map(([name, members]) => ({ name, series: members }));
+}
+
 function ChartTable({ periods, series, stacked }: Pick<Props, "periods" | "series" | "stacked">) {
+  // Stacked: each stack's series, then its total when there's more than one.
+  const columns = (stacked ? stacksOf(series) : [{ name: "", series }]).flatMap((st) => [
+    ...st.series.map((s) => ({ key: String(s.id), name: s.name, value: (i: number) => s.values[i] ?? 0 })),
+    ...(stacked && st.series.length > 1
+      ? [
+          {
+            key: `total:${st.name}`,
+            name: st.name ? `${st.name} total` : "Total",
+            value: (i: number) => st.series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0),
+          },
+        ]
+      : []),
+  ]);
   return (
     <div className="table-scroll">
       <table className="chart-table">
         <thead>
           <tr>
             <th>Period</th>
-            {series.map((s) => (
-              <th key={s.id} className="num">
-                {s.name}
+            {columns.map((c) => (
+              <th key={c.key} className="num">
+                {c.name}
               </th>
             ))}
-            {stacked && series.length > 1 && <th className="num">Total</th>}
           </tr>
         </thead>
         <tbody>
           {periods.map((p, i) => (
             <tr key={p.key}>
               <td>{p.longLabel ?? p.label}</td>
-              {series.map((s) => (
-                <td key={s.id} className="num">
-                  {formatCents(s.values[i] ?? 0)}
+              {columns.map((c) => (
+                <td key={c.key} className="num">
+                  {formatCents(c.value(i))}
                 </td>
               ))}
-              {stacked && series.length > 1 && (
-                <td className="num">{formatCents(series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0))}</td>
-              )}
             </tr>
           ))}
         </tbody>

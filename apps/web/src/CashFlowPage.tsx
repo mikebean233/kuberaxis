@@ -1,14 +1,12 @@
 import { useState } from "react";
 import {
   amountsByCategory,
-  endOfMonth,
+  earliestDate,
   formatDollarsShort,
   type FlowKind,
   latestDate,
-  latestMonth,
   monthPeriod,
   monthOf,
-  monthRangeLabel,
   monthsEnding,
   rankCategories,
   spendDate,
@@ -18,9 +16,11 @@ import {
   weekOf,
   weeksBetween,
 } from "./analytics";
-import type { Category, TransactionRow } from "./api";
+import type { Account, Category, TransactionRow } from "./api";
 import { ColumnChart, type ChartSeries } from "./ColumnChart";
-import { formatCents } from "./format";
+import { formatDate } from "./format";
+import { DEFAULT_PERIOD, PeriodPicker, type PeriodState, resolvePeriod } from "./PeriodPicker";
+import { MultiSelect } from "./MultiSelect";
 import { PeriodPivot } from "./PeriodPivot";
 
 interface Props {
@@ -28,33 +28,23 @@ interface Props {
   categories: Category[];
 }
 
-const RANGES = [
-  { id: "3", label: "Last 3 months", months: 3 },
-  { id: "6", label: "Last 6 months", months: 6 },
-  { id: "12", label: "Last 12 months", months: 12 },
-  { id: "all", label: "All time", months: null },
-] as const;
-
-/** Categories that get their own color; the rest fold into "Other". */
+/** Categories that get their own color, shared by both kinds; the rest of each kind folds into "Other". */
 const NAMED_SLOTS = 6;
+/** At most this many of the named slots go to income, which usually has few categories. */
+const INCOME_SLOTS = 2;
 const OTHER_ID = -2;
 
-const BREAKDOWNS: Record<FlowKind, { title: string; note: string }> = {
-  expense: {
-    title: "Spending",
-    note: "Spending categories net of refunds, plus money out that isn't categorized yet.",
-  },
-  income: {
-    title: "Income",
-    note: "Income categories net of reversals. Money in without a category isn't included.",
-  },
-};
+/** Spending's column sits left of income's in each period. */
+const KINDS: { kind: FlowKind; title: string }[] = [
+  { kind: "expense", title: "Spending" },
+  { kind: "income", title: "Income" },
+];
 
 type Period = { key: string; label: string; longLabel?: string };
 
-/** Income and spending over time, then each broken down by category. */
-export function CashFlowPage({ transactions: allTransactions, categories }: Props) {
-  const [rangeId, setRangeId] = useState<(typeof RANGES)[number]["id"]>("6");
+/** Income and spending over the period, broken down by category, then the transactions behind them. */
+export function CashFlowPage({ transactions: allTransactions, categories, accounts: accountList }: Props & { accounts: Account[] }) {
+  const [period, setPeriod] = useState<PeriodState>(DEFAULT_PERIOD);
   const [grouping, setGrouping] = useState<"month" | "week">("month");
   const [accountId, setAccountId] = useState<number | "all">("all");
 
@@ -65,29 +55,27 @@ export function CashFlowPage({ transactions: allTransactions, categories }: Prop
   const account = accountId !== "all" && accounts.some(([id]) => id === accountId) ? accountId : "all";
   const transactions = account === "all" ? allTransactions : allTransactions.filter((t) => t.accountId === account);
 
-  const last = latestMonth(transactions);
-  if (!last) return <p className="empty">No transactions yet. Import a statement to get started.</p>;
+  const first = earliestDate(transactions);
+  const last = latestDate(transactions);
+  if (!first || !last) return <p className="empty">No transactions yet. Import a statement to get started.</p>;
 
-  const range = RANGES.find((r) => r.id === rangeId)!;
-  const first =
-    range.months === null
-      ? monthOf(transactions.reduce((min, t) => (spendDate(t) < min ? spendDate(t) : min), spendDate(transactions[0]!)))
-      : null;
-  const months = range.months === null ? monthsBetween(first!, last) : monthsEnding(last, range.months);
+  // One span of dates drives every section below.
+  const { span, size, label: rangeText } = resolvePeriod(period, first, last);
+  const inSpan = transactions.filter((t) => spendDate(t) >= span.start && spendDate(t) <= span.end);
+  const months = monthsBetween(monthOf(span.start), monthOf(span.end));
   const periods: Period[] =
     grouping === "month"
-      ? months.map((m) => monthPeriod(m, latestDate(transactions), { initial: months.length > 12 }))
-      : weeksBetween(`${months[0]}-01`, endOfMonth(months[months.length - 1]!)).map((w) => ({
+      ? months.map((m) => monthPeriod(m, last, { initial: months.length > 12 }))
+      : weeksBetween(span.start, span.end).map((w) => ({
           key: w,
           label: weekLabel(w),
           longLabel: `Week of ${weekLabel(w)}`,
         }));
   const periodOf = grouping === "month" ? monthOf : weekOf;
-  const rangeText = monthRangeLabel(months[0]!, months[months.length - 1]!);
   const capLabels = grouping === "month" && periods.length <= 12;
 
   const byPeriod = totalsByPeriod(
-    transactions,
+    inSpan,
     categories,
     periods.map((p) => p.key),
     periodOf,
@@ -100,7 +88,7 @@ export function CashFlowPage({ transactions: allTransactions, categories }: Prop
   // Money out without a category, which the spending breakdown counts.
   const uncategorizedOut = [
     ...amountsByCategory(
-      transactions,
+      inSpan,
       categories,
       "expense",
       periods.map((p) => p.key),
@@ -109,26 +97,28 @@ export function CashFlowPage({ transactions: allTransactions, categories }: Prop
   ].reduce((sum, bucket) => sum + (bucket.get(UNCATEGORIZED_ID) ?? 0), 0);
   const net = total.income - total.spending;
 
-  const breakdown = { transactions, categories, periods, periodOf, months: months.length, rangeText, grouping, capLabels };
+  const breakdown = {
+    transactions: inSpan,
+    rankFrom: transactions,
+    categories,
+    periods,
+    periodOf,
+    grouping,
+    capLabels,
+  };
 
   return (
     <>
       <header className="page-head">
         <h1>Cash flow</h1>
-        <p className="muted">{rangeText}</p>
+        <p className="muted">
+          {rangeText}
+          {span.end > last && span.start <= last && ` · data through ${formatDate(last)}`}
+        </p>
       </header>
 
       <div className="filters filter-row">
-        <label>
-          Range
-          <select value={rangeId} onChange={(e) => setRangeId(e.target.value as typeof rangeId)}>
-            {RANGES.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <PeriodPicker state={period} onChange={setPeriod} first={first} last={last} />
         <label>
           Group by
           <select value={grouping} onChange={(e) => setGrouping(e.target.value as typeof grouping)}>
@@ -172,184 +162,158 @@ export function CashFlowPage({ transactions: allTransactions, categories }: Prop
         </div>
       </div>
 
-      <section className="panel">
-        <ColumnChart
-          title={`Income and spending per ${grouping}`}
-          periods={periods}
-          series={[
-            { id: "income", name: "Income", color: "var(--viz-2)", values: periods.map((p) => byPeriod.get(p.key)!.income) },
-            { id: "spending", name: "Spending", color: "var(--viz-1)", values: periods.map((p) => byPeriod.get(p.key)!.spending) },
-          ]}
-          capLabels={capLabels && periods.length <= 6}
-          height={260}
-        />
-        <p className="muted chart-note">
-          Categorized income and spending. Transfers between your own accounts (credit card payments, investments) and
-          uncategorized transactions aren't counted.
-        </p>
-      </section>
-
-      <CategoryBreakdown kind="expense" {...breakdown} />
-      <CategoryBreakdown kind="income" {...breakdown} />
-      <PeriodPivot transactions={transactions} categories={categories} />
+      <CategoryBreakdown {...breakdown} />
+      <PeriodPivot
+        transactions={inSpan}
+        categories={categories}
+        span={span}
+        size={size}
+        dataRanges={new Map(accountList.map((a) => [a.id, { firstDate: a.firstDate, lastDate: a.lastDate }]))}
+      />
     </>
   );
 }
 
-/** One kind of category over the range: a stacked chart and a table of totals, with a category focus. */
+/** Spending and income by category in one chart: a stacked column of each per period, narrowed to chosen categories. */
 function CategoryBreakdown({
-  kind,
   transactions,
+  rankFrom,
   categories,
   periods,
   periodOf,
-  months,
-  rangeText,
   grouping,
   capLabels,
 }: Props & {
-  kind: FlowKind;
+  /** All transactions (not just this range), so category colors stay put as the range changes. */
+  rankFrom: TransactionRow[];
   periods: Period[];
   periodOf: (iso: string) => string;
-  months: number;
-  rangeText: string;
   grouping: string;
   capLabels: boolean;
 }) {
-  const [focus, setFocus] = useState<number | "all">("all");
-  const { title, note } = BREAKDOWNS[kind];
+  // Keys like "expense:12". Kept when the range changes, so a category with nothing in this range comes back after.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Colors are assigned by all-time rank, so a category keeps its color whatever the range or filter.
-  const named = rankCategories(transactions, categories, kind).slice(0, NAMED_SLOTS);
-  const colorOf = (id: number) =>
-    id === UNCATEGORIZED_ID ? "var(--viz-neutral)" : named.includes(id) ? `var(--viz-${named.indexOf(id) + 1})` : "var(--viz-7)";
+  // Colors are assigned by all-time rank, so a category keeps its color whatever the range or filter. Both kinds
+  // share one chart, so they split the palette instead of each starting at the first color.
+  const rankedIncome = rankCategories(rankFrom, categories, "income");
+  const incomeSlots = Math.min(INCOME_SLOTS, rankedIncome.length);
+  const named: Record<FlowKind, number[]> = {
+    expense: rankCategories(rankFrom, categories, "expense").slice(0, NAMED_SLOTS - incomeSlots),
+    income: rankedIncome.slice(0, incomeSlots),
+  };
+  const slotOf = (kind: FlowKind, id: number) => {
+    const index = named[kind].indexOf(id);
+    return index === -1 ? null : (kind === "income" ? NAMED_SLOTS - incomeSlots : 0) + index + 1;
+  };
+  const colorOf = (kind: FlowKind, id: number) => {
+    if (id === UNCATEGORIZED_ID) return "var(--viz-neutral)";
+    const slot = slotOf(kind, id);
+    return slot === null ? "var(--viz-7)" : `var(--viz-${slot})`;
+  };
   const names = new Map(categories.map((c) => [c.id, c.name]));
-  const nameOf = (id: number) => (id === UNCATEGORIZED_ID ? "Uncategorized" : id === OTHER_ID ? "Other" : (names.get(id) ?? "?"));
+  const nameOf = (id: number) => (id === UNCATEGORIZED_ID ? "Uncategorized" : (names.get(id) ?? "?"));
+  const keyOf = (kind: FlowKind, id: number) => `${kind}:${id}`;
 
-  const data = amountsByCategory(
-    transactions,
-    categories,
-    kind,
-    periods.map((p) => p.key),
-    periodOf,
-  );
-  const valueOf = (period: string, id: number) => data.get(period)?.get(id) ?? 0;
+  const kinds = KINDS.map(({ kind, title }) => {
+    const data = amountsByCategory(
+      transactions,
+      categories,
+      kind,
+      periods.map((p) => p.key),
+      periodOf,
+    );
+    const totals = new Map<number, number>();
+    for (const bucket of data.values()) for (const [id, cents] of bucket) totals.set(id, (totals.get(id) ?? 0) + cents);
+    // Largest first; what's in range is what can be picked.
+    const ids = [...totals.entries()]
+      .filter(([, cents]) => cents !== 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id]) => id);
+    return { kind, title, ids, valueOf: (period: string, id: number) => data.get(period)?.get(id) ?? 0 };
+  });
+  // Only chosen categories with something in this range count; none of those means all.
+  const chosen = kinds.flatMap((k) => k.ids.filter((id) => selected.has(keyOf(k.kind, id))).map((id) => ({ k, id })));
 
-  const totals = new Map<number, number>();
-  for (const bucket of data.values()) for (const [id, cents] of bucket) totals.set(id, (totals.get(id) ?? 0) + cents);
-  const rows = [...totals.entries()].filter(([, cents]) => cents !== 0).sort((a, b) => b[1] - a[1]);
-  const grandTotal = rows.reduce((sum, [, cents]) => sum + cents, 0);
-  // A focused category with nothing in the new range falls back to all.
-  const focused = focus !== "all" && totals.has(focus) ? focus : "all";
+  const seriesOf = (k: (typeof kinds)[number], ids: number[], name: string, color: string, id: string | number): ChartSeries => ({
+    id,
+    name,
+    color,
+    stack: k.title,
+    values: periods.map((p) => ids.reduce((sum, i) => sum + k.valueOf(p.key, i), 0)),
+  });
+  const one = (k: (typeof kinds)[number], id: number, color = colorOf(k.kind, id)) =>
+    seriesOf(k, [id], nameOf(id), color, keyOf(k.kind, id));
+  const other = (k: (typeof kinds)[number], ids: number[]) =>
+    seriesOf(k, ids, `Other ${k.title.toLowerCase()} (${ids.length})`, "var(--viz-7)", keyOf(k.kind, OTHER_ID));
 
   let series: ChartSeries[];
-  if (focused === "all") {
-    const inRange = new Set(totals.keys());
-    const otherIds = [...inRange].filter((id) => id !== UNCATEGORIZED_ID && !named.includes(id));
-    series = [
-      ...named
-        .filter((id) => inRange.has(id))
-        .map((id) => ({ id, name: nameOf(id), color: colorOf(id), values: periods.map((p) => valueOf(p.key, id)) })),
-      ...(otherIds.length
-        ? [
-            {
-              id: OTHER_ID,
-              name: `Other (${otherIds.length})`,
-              color: "var(--viz-7)",
-              values: periods.map((p) => otherIds.reduce((sum, id) => sum + valueOf(p.key, id), 0)),
-            },
-          ]
-        : []),
-      ...(inRange.has(UNCATEGORIZED_ID)
-        ? [
-            {
-              id: UNCATEGORIZED_ID,
-              name: "Uncategorized",
-              color: colorOf(UNCATEGORIZED_ID),
-              values: periods.map((p) => valueOf(p.key, UNCATEGORIZED_ID)),
-            },
-          ]
-        : []),
-    ];
+  if (chosen.length === 0) {
+    series = kinds.flatMap((k) => {
+      const otherIds = k.ids.filter((id) => id !== UNCATEGORIZED_ID && slotOf(k.kind, id) === null);
+      return [
+        ...named[k.kind].filter((id) => k.ids.includes(id)).map((id) => one(k, id)),
+        ...(otherIds.length ? [other(k, otherIds)] : []),
+        ...(k.ids.includes(UNCATEGORIZED_ID) ? [one(k, UNCATEGORIZED_ID)] : []),
+      ];
+    });
   } else {
-    series = [{ id: focused, name: nameOf(focused), color: colorOf(focused), values: periods.map((p) => valueOf(p.key, focused)) }];
+    // Chosen categories that would be "Other" get their own color from the slots no chosen category is using,
+    // so each one can be told apart; any past that fold into "Other" as usual.
+    const used = new Set(chosen.map(({ k, id }) => slotOf(k.kind, id)));
+    const free = Array.from({ length: NAMED_SLOTS }, (_, i) => i + 1).filter((slot) => !used.has(slot));
+    series = kinds.flatMap((k) => {
+      const mine = chosen.filter((c) => c.k === k).map((c) => c.id);
+      const unslotted = mine.filter((id) => id !== UNCATEGORIZED_ID && slotOf(k.kind, id) === null);
+      const extra = unslotted.slice(0, free.length);
+      const overflow = unslotted.slice(extra.length);
+      const colored = new Map(extra.map((id) => [id, `var(--viz-${free.shift()!})`]));
+      return [
+        ...mine.filter((id) => id !== UNCATEGORIZED_ID && !overflow.includes(id)).map((id) => one(k, id, colored.get(id))),
+        ...(overflow.length ? [other(k, overflow)] : []),
+        ...(mine.includes(UNCATEGORIZED_ID) ? [one(k, UNCATEGORIZED_ID)] : []),
+      ];
+    });
   }
 
-  const perMonth = (cents: number) => formatCents(Math.round(cents / months));
+  const hasAny = kinds.some((k) => k.ids.length > 0);
+  const title =
+    chosen.length === 1
+      ? `${nameOf(chosen[0]!.id)} per ${grouping}`
+      : chosen.length > 1
+        ? `Selected categories per ${grouping}`
+        : `Spending (left) and income (right) by category per ${grouping}`;
 
   return (
     <section className="panel">
       <div className="section-head">
-        <h2>{title} by category</h2>
-        {rows.length > 0 && (
+        <h2>Spending and income by category</h2>
+        {hasAny && (
           <div className="filters">
-            <label>
-              Category
-              <select value={focused} onChange={(e) => setFocus(e.target.value === "all" ? "all" : Number(e.target.value))}>
-                <option value="all">All categories</option>
-                {rows.map(([id]) => (
-                  <option key={id} value={id}>
-                    {nameOf(id)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <MultiSelect
+              label="Categories"
+              allLabel="All categories"
+              groups={kinds.map((k) => ({
+                label: k.title,
+                options: k.ids.map((id) => ({ value: keyOf(k.kind, id), label: nameOf(id), color: colorOf(k.kind, id) })),
+              }))}
+              selected={new Set(chosen.map(({ k, id }) => keyOf(k.kind, id)))}
+              onChange={setSelected}
+            />
           </div>
         )}
       </div>
 
-      {rows.length === 0 ? (
-        <p className="muted">No {title.toLowerCase()} in this range.</p>
+      {!hasAny ? (
+        <p className="muted">No spending or income in this range.</p>
       ) : (
         <>
-          <ColumnChart
-            title={focused === "all" ? `${title} by category per ${grouping}` : `${nameOf(focused)} per ${grouping}`}
-            periods={periods}
-            series={series}
-            stacked
-            capLabels={capLabels}
-            height={300}
-          />
-          <p className="muted chart-note">{note}</p>
-
-          <h3 className="chart-title">
-            {title} totals · {rangeText}
-          </h3>
-          <div className="table-scroll">
-            <table className="chart-table">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th className="num">Total</th>
-                  <th className="num">Per month</th>
-                  <th className="num">Share</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(([id, cents]) => (
-                  <tr key={id} className={focused === id ? "selected" : undefined}>
-                    <td>
-                      <span className="swatch" style={{ background: colorOf(id) }} aria-hidden="true" />
-                      <button type="button" className="link" onClick={() => setFocus(focused === id ? "all" : id)}>
-                        {nameOf(id)}
-                      </button>
-                    </td>
-                    <td className="num">{formatCents(cents)}</td>
-                    <td className="num">{perMonth(cents)}</td>
-                    <td className="num">{grandTotal > 0 ? `${((cents / grandTotal) * 100).toFixed(1)}%` : "–"}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td>Total</td>
-                  <td className="num">{formatCents(grandTotal)}</td>
-                  <td className="num">{perMonth(grandTotal)}</td>
-                  <td />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          <ColumnChart title={title} periods={periods} series={series} stacked capLabels={capLabels && periods.length <= 6} height={320} />
+          <p className="muted chart-note">
+            Spending is spending categories net of refunds, plus money out that isn't categorized yet (gray). Income is
+            income categories net of reversals. Transfers between your own accounts (credit card payments, investments)
+            and uncategorized money in aren't counted.
+          </p>
         </>
       )}
     </section>
