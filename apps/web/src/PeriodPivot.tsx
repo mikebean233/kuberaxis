@@ -2,6 +2,8 @@ import { Fragment, useState } from "react";
 import {
   type DataRange,
   type DateSpan,
+  hasUnitOfData,
+  minCoveredDays,
   type PeriodSize,
   perDay,
   type PivotEntry,
@@ -43,23 +45,33 @@ export function PeriodPivot({ transactions, categories, span, size, dataRanges }
   const net = income - spending;
   const isEmpty = groups.every((g) => g.categories.length === 0);
 
-  // Per-unit averages: each account prorated over the part of the period it has data for. Units as long as the
-  // period or longer show "–".
+  // Per-unit averages: each account prorated over the part of the period it has data for. "–" for units as long as
+  // the period or longer, and for units longer than the data a row's accounts have in the period.
   const units = RATE_UNITS.map((u) => ({ ...u, applies: rateUnitApplies(u.id, size, span) }));
-  const rateOf = (entries: PivotEntry[]) =>
-    perDay(
-      entries.map((e) => ({ accountId: e.transaction.accountId, cents: e.cents })),
-      span,
-      dataRanges,
-    );
+  const partsOf = (entries: PivotEntry[]) => entries.map((e) => ({ accountId: e.transaction.accountId, cents: e.cents }));
+  const rateOf = (entries: PivotEntry[]) => ({
+    perDay: perDay(partsOf(entries), span, dataRanges),
+    days: minCoveredDays(partsOf(entries), span, dataRanges),
+  });
   const entriesOf = (section: PivotSection) => groups.find((g) => g.section === section)!.categories.flatMap((c) => c.entries);
-  const rateCells = (rate: number | null, className = "") =>
-    units.map((u) => (
-      <td key={u.id} className={`num ${className}`}>
-        {rate === null ? "" : u.applies ? formatCents(Math.round(rate * u.days)) : "–"}
-      </td>
-    ));
-  const netRate = rateOf(entriesOf("income")) - rateOf(entriesOf("expense"));
+  const rateCells = (rate: { perDay: number; days: number } | null, className = "") =>
+    units.map((u) => {
+      const short = rate !== null && u.applies && !hasUnitOfData(rate.days, u);
+      return (
+        <td
+          key={u.id}
+          className={`num ${className}`}
+          title={short ? `Only ${rate.days} day${rate.days === 1 ? "" : "s"} of data in this period` : undefined}
+        >
+          {rate === null ? "" : u.applies && !short ? formatCents(Math.round(rate.perDay * u.days)) : "–"}
+        </td>
+      );
+    });
+  const netRate = (() => {
+    const income = rateOf(entriesOf("income"));
+    const spending = rateOf(entriesOf("expense"));
+    return { perDay: income.perDay - spending.perDay, days: Math.min(income.days, spending.days) };
+  })();
 
   const names = new Map(categories.map((c) => [c.id, c.name]));
   const nameOf = (id: number) =>
@@ -181,7 +193,7 @@ export function PeriodPivot({ transactions, categories, span, size, dataRanges }
                   {formatCents(net)}
                 </td>
                 <td />
-                {rateCells(netRate, netRate > 0 ? "good" : netRate < 0 ? "bad" : "")}
+                {rateCells(netRate, netRate.perDay > 0 ? "good" : netRate.perDay < 0 ? "bad" : "")}
               </tr>
             </tfoot>
           </table>

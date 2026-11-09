@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   coveredDays,
+  hasUnitOfData,
+  minCoveredDays,
   perDay,
   RATE_UNITS,
   rateUnitApplies,
@@ -224,6 +226,25 @@ describe("per-unit averages", () => {
       ranges,
     );
     expect(rate).toBeCloseTo(100 + 100);
+  });
+
+  it("needs a unit's worth of data from every account behind a row", () => {
+    const quarter = spanOf("quarter", "2025-10-01");
+    const ranges = new Map([
+      [1, { firstDate: "2024-01-01", lastDate: "2025-10-08" }],
+      [2, { firstDate: "2024-01-01", lastDate: "2025-12-31" }],
+    ]);
+    const unit = (id: string) => RATE_UNITS.find((u) => u.id === id)!;
+    // 8 days of Q4: per day only, not per month (one monthly bill would read as almost 4 a month).
+    expect(minCoveredDays([{ accountId: 1 }], quarter, ranges)).toBe(8);
+    expect(hasUnitOfData(8, unit("day"))).toBe(true);
+    expect(hasUnitOfData(8, unit("month"))).toBe(false);
+    // The account with the least data decides.
+    expect(minCoveredDays([{ accountId: 1 }, { accountId: 2 }], quarter, ranges)).toBe(8);
+    expect(minCoveredDays([{ accountId: 2 }], quarter, ranges)).toBe(92);
+    expect(hasUnitOfData(30, unit("month"))).toBe(true);
+    expect(hasUnitOfData(29, unit("month"))).toBe(false);
+    expect(hasUnitOfData(273, unit("half"))).toBe(true);
   });
 
   it("shows only units shorter than the period", () => {
