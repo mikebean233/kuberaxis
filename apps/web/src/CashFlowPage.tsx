@@ -53,9 +53,17 @@ const BREAKDOWNS: Record<FlowKind, { title: string; note: string }> = {
 type Period = { key: string; label: string; longLabel?: string };
 
 /** Income and spending over time, then each broken down by category. */
-export function CashFlowPage({ transactions, categories }: Props) {
+export function CashFlowPage({ transactions: allTransactions, categories }: Props) {
   const [rangeId, setRangeId] = useState<(typeof RANGES)[number]["id"]>("6");
   const [grouping, setGrouping] = useState<"month" | "week">("month");
+  const [accountId, setAccountId] = useState<number | "all">("all");
+
+  const accounts = [...new Map(allTransactions.map((t) => [t.accountId, t.accountName])).entries()].sort((a, b) =>
+    a[1].localeCompare(b[1]),
+  );
+  // An account that's no longer present (deleted, purged) falls back to all.
+  const account = accountId !== "all" && accounts.some(([id]) => id === accountId) ? accountId : "all";
+  const transactions = account === "all" ? allTransactions : allTransactions.filter((t) => t.accountId === account);
 
   const last = latestMonth(transactions);
   if (!last) return <p className="empty">No transactions yet. Import a statement to get started.</p>;
@@ -128,6 +136,19 @@ export function CashFlowPage({ transactions, categories }: Props) {
             <option value="week">Week</option>
           </select>
         </label>
+        {accounts.length > 1 && (
+          <label>
+            Account
+            <select value={account} onChange={(e) => setAccountId(e.target.value === "all" ? "all" : Number(e.target.value))}>
+              <option value="all">All accounts</option>
+              {accounts.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="stat-row">

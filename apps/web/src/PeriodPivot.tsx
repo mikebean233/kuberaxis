@@ -162,6 +162,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
             <thead>
               <tr>
                 <th>Category</th>
+                <th>Account</th>
                 <th>Date</th>
                 <th className="num">Amount</th>
                 <th className="num">Share</th>
@@ -172,7 +173,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
               .map((g) => (
                 <tbody key={g.section}>
                   <tr className="pivot-section">
-                    <th scope="rowgroup" colSpan={2}>
+                    <th scope="rowgroup" colSpan={3}>
                       {SECTIONS[g.section].title}
                       {SECTIONS[g.section].note && <span className="detail"> · {SECTIONS[g.section].note}</span>}
                     </th>
@@ -193,7 +194,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
                               {nameOf(c.id)}
                             </button>
                           </td>
-                          <td className="muted">
+                          <td className="muted" colSpan={2}>
                             {c.entries.length} transaction{c.entries.length === 1 ? "" : "s"}
                           </td>
                           <td className="num">{formatCents(c.total)}</td>
@@ -206,11 +207,16 @@ export function PeriodPivot({ transactions, categories }: Props) {
                             <tr key={e.transaction.id} className="pivot-entry">
                               <td>
                                 <div className="pivot-description">{e.transaction.description}</div>
-                                <div className="detail">
-                                  {e.transaction.accountName}
-                                  {e.partial && ` · part of ${formatCents(Math.round(e.transaction.amount * 100))}`}
-                                </div>
+                                {e.transaction.details.map((detail, i) => (
+                                  <div key={i} className="detail">
+                                    {detail}
+                                  </div>
+                                ))}
+                                {e.partial && (
+                                  <div className="detail">Part of {formatCents(Math.round(e.transaction.amount * 100))}</div>
+                                )}
                               </td>
+                              <td>{e.transaction.accountName}</td>
                               <td>{formatDate(spendDate(e.transaction))}</td>
                               <td className="num">{formatCents(e.cents)}</td>
                               <td />
@@ -223,7 +229,7 @@ export function PeriodPivot({ transactions, categories }: Props) {
               ))}
             <tfoot>
               <tr>
-                <td colSpan={2}>Net (income − spending)</td>
+                <td colSpan={3}>Net (income − spending)</td>
                 <td className={`num ${net > 0 ? "good" : net < 0 ? "bad" : ""}`}>
                   {net > 0 ? "+" : ""}
                   {formatCents(net)}
