@@ -380,6 +380,25 @@ export function perDay(
 }
 
 /**
+ * The fewest days of data in the span among the parts' accounts. A per-unit average needs at least a unit's worth
+ * (see `hasUnitOfData`): a monthly bill inside 8 days of data would otherwise extrapolate to almost 4 a month.
+ */
+export function minCoveredDays(
+  parts: { accountId: number }[],
+  span: { start: string; end: string },
+  ranges: Map<number, DataRange>,
+): number {
+  let fewest = Infinity;
+  for (const { accountId } of parts) {
+    fewest = Math.min(fewest, coveredDays(span, ranges.get(accountId) ?? { firstDate: null, lastDate: null }));
+  }
+  return fewest;
+}
+
+/** Whether `days` of data are enough for an average per `unit` (whole days, so a 30-day month of data counts). */
+export const hasUnitOfData = (days: number, unit: (typeof RATE_UNITS)[number]) => days >= Math.floor(unit.days);
+
+/**
  * Whether a unit is shorter than the period, so a per-unit average means something: a calendar period (or rolling
  * one of the same length) shows only the smaller units; other spans show units at least 10% shorter than them.
  */
