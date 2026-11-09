@@ -108,8 +108,9 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { font-size: 12px; color: var(--muted); white-space: nowrap; }
 td { white-space: nowrap; }
-td:nth-child(5) { white-space: normal; min-width: 260px; }
-td:nth-child(6) { white-space: normal; min-width: 120px; }
+/* The transactions table's description and category columns; charts and the pivot size to their content. */
+table:not(.chart-table) td:nth-child(5) { white-space: normal; min-width: 260px; }
+table:not(.chart-table) td:nth-child(6) { white-space: normal; min-width: 120px; }
 th.num, td.num { text-align: right; }
 th.num .sort { flex-direction: row-reverse; }
 .sort { display: inline-flex; gap: 4px; border: none; background: none; padding: 0; font-weight: 600; color: inherit; }
@@ -374,5 +375,6 @@ main { max-width: 1400px; width: 100%; padding: 24px 24px 48px; }
 .pivot .disclosure[aria-expanded="true"] .chevron { transform: rotate(90deg); }
 .pivot .pivot-entry td { font-size: 13px; background: color-mix(in srgb, var(--accent) 3%, transparent); }
 .pivot .pivot-entry td:first-child { padding-left: 32px; white-space: normal; }
+.pivot th.num, .pivot td.num { padding-left: 6px; padding-right: 6px; }
 .pivot td.good { color: var(--viz-good); }
 .pivot td.bad { color: var(--viz-bad); }
